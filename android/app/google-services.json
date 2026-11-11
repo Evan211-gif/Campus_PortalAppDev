@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "178412528117",
+    "project_id": "campusportal-df6cd",
+    "storage_bucket": "campusportal-df6cd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:178412528117:android:38d2d60ef5dddbc4a6c0bc",
+        "android_client_info": {
+          "package_name": "com.example.my_first_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA95njznKG2aQkgoMWzeCwPfyiMXCCL8QM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
