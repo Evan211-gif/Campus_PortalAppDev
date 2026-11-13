@@ -2,8 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-class AnnouncementsPage extends StatelessWidget {
+class AnnouncementsPage extends StatefulWidget {
   const AnnouncementsPage({super.key});
+
+  @override
+  State<AnnouncementsPage> createState() => _AnnouncementsPageState();
+}
+
+class _AnnouncementsPageState extends State<AnnouncementsPage> {
+  bool showingArchived = false;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +40,7 @@ class AnnouncementsPage extends StatelessWidget {
 
         final role = userSnapshot.data!.data()?['role'];
 
-        if (!['admin', 'student', 'club_advisor'].contains(role)) {
+        if (!['admin', 'student', 'teacher'].contains(role)) {
           return const Scaffold(
             body: Center(child: Text('You do not have permission.')),
           );
@@ -42,7 +49,27 @@ class AnnouncementsPage extends StatelessWidget {
         final isAdmin = role == 'admin';
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Announcements')),
+          appBar: AppBar(
+            title: Text(
+              showingArchived ? 'Archived Announcements' : 'Announcements',
+            ),
+            actions: [
+              if (isAdmin)
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      showingArchived = !showingArchived;
+                    });
+                  },
+                  icon: Icon(
+                    showingArchived
+                        ? Icons.campaign_outlined
+                        : Icons.archive_outlined,
+                  ),
+                  label: Text(showingArchived ? 'Published' : 'Archived'),
+                ),
+            ],
+          ),
           floatingActionButton: isAdmin
               ? FloatingActionButton(
                   onPressed: () {
@@ -57,7 +84,10 @@ class AnnouncementsPage extends StatelessWidget {
           body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: FirebaseFirestore.instance
                 .collection('announcements')
-                .where('status', isEqualTo: 'published')
+                .where(
+                  'status',
+                  isEqualTo: showingArchived ? 'archived' : 'published',
+                )
                 .orderBy('publishedAt', descending: true)
                 .snapshots(),
             builder: (context, snapshot) {
@@ -99,7 +129,109 @@ class AnnouncementsPage extends StatelessWidget {
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      trailing: data['pinned'] == true
+                      trailing: isAdmin
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (data['pinned'] == true)
+                                  const Icon(
+                                    Icons.push_pin,
+                                    color: Colors.orange,
+                                  ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.blue,
+                                  ),
+                                  tooltip: 'Edit Announcement',
+                                  onPressed: () {
+                                    showDialog(
+                                      context: context,
+                                      builder: (dialogContext) =>
+                                          CreateAnnouncementDialog(
+                                            announcementId:
+                                                announcements[index].id,
+                                            existingData: data,
+                                          ),
+                                    );
+                                  },
+                                ),
+
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.archive_outlined,
+                                    color: Colors.orange,
+                                  ),
+                                  tooltip: 'Archive Announcement',
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (dialogContext) => AlertDialog(
+                                        title: const Text(
+                                          'Archive Announcement',
+                                        ),
+                                        content: const Text(
+                                          'Are you sure you want to archive this announcement?',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(
+                                              dialogContext,
+                                              false,
+                                            ),
+                                            child: const Text('Cancel'),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(
+                                              dialogContext,
+                                              true,
+                                            ),
+                                            child: const Text('Archive'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+
+                                    if (confirm != true) return;
+
+                                    try {
+                                      await FirebaseFirestore.instance
+                                          .collection('announcements')
+                                          .doc(announcements[index].id)
+                                          .update({
+                                            'status': 'archived',
+                                            'archivedAt':
+                                                FieldValue.serverTimestamp(),
+                                          });
+
+                                      if (!context.mounted) return;
+
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Announcement archived successfully.',
+                                              ),
+                                            ),
+                                          );
+                                    } catch (error) {
+                                      if (!context.mounted) return;
+
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Failed to archive announcement: $error',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                              ],
+                            )
+                          : data['pinned'] == true
                           ? const Icon(Icons.push_pin, color: Colors.orange)
                           : null,
                     ),
@@ -115,7 +247,16 @@ class AnnouncementsPage extends StatelessWidget {
 }
 
 class CreateAnnouncementDialog extends StatefulWidget {
-  const CreateAnnouncementDialog({super.key});
+  final String? announcementId;
+  final Map<String, dynamic>? existingData;
+
+  const CreateAnnouncementDialog({
+    super.key,
+    this.announcementId,
+    this.existingData,
+  });
+
+  bool get isEditing => announcementId != null;
 
   @override
   State<CreateAnnouncementDialog> createState() =>
@@ -127,6 +268,24 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
 
   final titleController = TextEditingController();
   final descriptionController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+
+    final data = widget.existingData;
+
+    if (data != null) {
+      titleController.text = data['title'] ?? '';
+      descriptionController.text = data['description'] ?? '';
+
+      selectedCategory = categories.contains(data['category'])
+          ? data['category']
+          : 'General';
+
+      isPinned = data['pinned'] == true;
+    }
+  }
 
   String selectedCategory = 'General';
   bool isPinned = false;
@@ -146,23 +305,39 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
     });
 
     try {
-      await FirebaseFirestore.instance.collection('announcements').add({
+      final announcementData = {
         'title': titleController.text.trim(),
         'description': descriptionController.text.trim(),
         'category': selectedCategory,
-        'status': 'published',
         'pinned': isPinned,
-        'publishedAt': FieldValue.serverTimestamp(),
-        'createdBy': user.uid,
-      });
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (widget.isEditing) {
+        await FirebaseFirestore.instance
+            .collection('announcements')
+            .doc(widget.announcementId)
+            .update(announcementData);
+      } else {
+        await FirebaseFirestore.instance.collection('announcements').add({
+          ...announcementData,
+          'status': 'published',
+          'publishedAt': FieldValue.serverTimestamp(),
+          'createdBy': user.uid,
+        });
+      }
 
       if (!mounted) return;
 
       Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Announcement published successfully!'),
+        SnackBar(
+          content: Text(
+            widget.isEditing
+                ? 'Announcement updated successfully!'
+                : 'Announcement published successfully!',
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -216,7 +391,7 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: selectedCategory,
+                  initialValue: selectedCategory,
                   decoration: const InputDecoration(
                     labelText: 'Category',
                     border: OutlineInputBorder(),

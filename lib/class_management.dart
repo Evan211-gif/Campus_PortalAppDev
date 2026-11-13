@@ -39,6 +39,13 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
     final classesSnapshot = await _db.collection('classes').get();
     final enrollmentsSnapshot = await _db.collection('class_enrollments').get();
 
+    final eventsSnapshot = await _db.collection('events').get();
+
+    final clubActivitiesSnapshot = await _db
+        .collection('club_activities')
+        .where('status', isEqualTo: 'approved')
+        .get();
+
     final targetStudentIds =
         selectedStudentIds ??
         enrollmentsSnapshot.docs
@@ -108,7 +115,67 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
         }
       }
     }
+    // Check conflicts against Campus Events and approved Club Activities.
+    for (final newSchedule in schedules) {
+      final newDay = newSchedule['dayOfWeek']?.toString();
+      final newRoom = newSchedule['roomName']?.toString();
+      final newStart = (newSchedule['startTimeMinutes'] as num).toInt();
+      final newEnd = (newSchedule['endTimeMinutes'] as num).toInt();
 
+      // Check Campus Events.
+      for (final event in eventsSnapshot.docs) {
+        final data = event.data();
+
+        if (data['status'] == 'archived') continue;
+
+        final dateValue = data['date'];
+        if (dateValue is! Timestamp) continue;
+
+        final eventDate = dateValue.toDate();
+        final eventDay = days[eventDate.weekday - 1];
+
+        if (eventDay != newDay) continue;
+        if (data['location']?.toString() != newRoom) continue;
+
+        final oldStart = data['startTimeMinutes'];
+        final oldEnd = data['endTimeMinutes'];
+
+        if (oldStart is! num || oldEnd is! num) continue;
+
+        final overlaps = newStart < oldEnd.toInt() && newEnd > oldStart.toInt();
+
+        if (overlaps) {
+          return 'Room conflict: $newRoom is already booked for '
+              '${data['title'] ?? 'a Campus Event'} on $newDay.';
+        }
+      }
+
+      // Check approved Club Activities.
+      for (final activity in clubActivitiesSnapshot.docs) {
+        final data = activity.data();
+
+        final dateValue = data['date'];
+        if (dateValue is! Timestamp) continue;
+
+        final activityDate = dateValue.toDate();
+        final activityDay = days[activityDate.weekday - 1];
+
+        if (activityDay != newDay) continue;
+        if (data['roomName']?.toString() != newRoom) continue;
+
+        final oldStart = data['startTimeMinutes'];
+        final oldEnd = data['endTimeMinutes'];
+
+        if (oldStart is! num || oldEnd is! num) continue;
+
+        final overlaps = newStart < oldEnd.toInt() && newEnd > oldStart.toInt();
+
+        if (overlaps) {
+          return 'Room conflict: $newRoom is already booked for '
+              '${data['activityTitle'] ?? 'a Club Activity'} on $newDay.';
+        }
+      }
+    }
     return null;
   }
 
@@ -197,6 +264,8 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
         'subjectCode': normalizedCode,
         'shift': normalizedShift,
         'schedules': schedules,
+        'teacherId': result['teacherId'],
+        'teacherName': result['teacherName'],
       };
 
       if (isEditing) {
@@ -717,11 +786,18 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
   late final TextEditingController subjectCodeController;
 
   String? selectedShift;
+  String? selectedTeacherId;
+  String? selectedTeacherName;
+
+  List<Map<String, dynamic>> teachers = [];
+  bool isLoadingTeachers = true;
+
   final List<_ClassScheduleEntry> schedules = [];
 
   @override
   void initState() {
     super.initState();
+    _loadTeachers();
 
     subjectNameController = TextEditingController(
       text: widget.existingData?['subjectName'] ?? '',
@@ -763,6 +839,50 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
           );
         }
       }
+    }
+  }
+
+  Future<void> _loadTeachers() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .where('role', isEqualTo: 'teacher')
+          .get();
+
+      if (!mounted) return;
+
+      setState(() {
+        teachers = snapshot.docs.map((doc) {
+          final data = doc.data();
+
+          return {
+            'id': doc.id,
+            'name': data['name'] ?? data['email'] ?? 'Unnamed Teacher',
+          };
+        }).toList();
+
+        final existingId = widget.existingData?['teacherId']?.toString();
+
+        if (existingId != null &&
+            teachers.any((teacher) => teacher['id'] == existingId)) {
+          selectedTeacherId = existingId;
+
+          selectedTeacherName = teachers.firstWhere(
+            (teacher) => teacher['id'] == existingId,
+          )['name'];
+        }
+
+        isLoadingTeachers = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingTeachers = false;
+      });
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Unable to load teachers: $e')));
     }
   }
 
@@ -889,6 +1009,8 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
       'subjectCode': code,
       'shift': selectedShift!,
       'schedules': scheduleData,
+      'teacherId': selectedTeacherId,
+      'teacherName': selectedTeacherName,
     });
   }
 
@@ -1015,6 +1137,37 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
                   setState(() => selectedShift = value);
                 },
               ),
+              const SizedBox(height: 12),
+
+              if (isLoadingTeachers)
+                const Center(child: CircularProgressIndicator())
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: selectedTeacherId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Assign Teacher',
+                    border: OutlineInputBorder(),
+                  ),
+                  hint: const Text('Select a Teacher'),
+                  items: teachers.map((teacher) {
+                    return DropdownMenuItem<String>(
+                      value: teacher['id'] as String,
+                      child: Text(teacher['name'].toString()),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      selectedTeacherId = value;
+
+                      selectedTeacherName = teachers
+                          .firstWhere(
+                            (teacher) => teacher['id'] == value,
+                          )['name']
+                          .toString();
+                    });
+                  },
+                ),
               const SizedBox(height: 20),
               Row(
                 children: [

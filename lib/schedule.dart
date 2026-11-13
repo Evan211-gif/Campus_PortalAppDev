@@ -22,7 +22,7 @@ class _SchedulePageState extends State<SchedulePage> {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  static const Color primaryColor = Color(0xFF991B1B);
+  static const Color primaryColor = Color(0xFF245A91);
   static const Color classColor = Color(0xFFE67E22);
   static const Color eventColor = Color(0xFF2878D0);
   static const Color holidayColor = Color(0xFF269B59);
@@ -67,25 +67,45 @@ class _SchedulePageState extends State<SchedulePage> {
       return [];
     }
 
-    final enrollmentSnapshot = await _db
-        .collection('class_enrollments')
-        .where('studentId', isEqualTo: user.uid)
-        .get();
+    final userDoc = await _db.collection('users').doc(user.uid).get();
+    final role = userDoc.data()?['role']?.toString();
+
+    final List<DocumentSnapshot<Map<String, dynamic>>> classDocs = [];
+
+    if (role == 'teacher') {
+      // Teachers load classes assigned to their account.
+      final snapshot = await _db
+          .collection('classes')
+          .where('teacherId', isEqualTo: user.uid)
+          .get();
+
+      classDocs.addAll(snapshot.docs);
+    } else {
+      // Students and Admin retain the existing enrollment-based behavior.
+      final enrollmentSnapshot = await _db
+          .collection('class_enrollments')
+          .where('studentId', isEqualTo: user.uid)
+          .get();
+
+      for (final enrollment in enrollmentSnapshot.docs) {
+        final classId = enrollment.data()['classId'];
+
+        if (classId == null) continue;
+
+        final classDoc = await _db
+            .collection('classes')
+            .doc(classId.toString())
+            .get();
+
+        if (classDoc.exists) {
+          classDocs.add(classDoc);
+        }
+      }
+    }
 
     final List<Map<String, dynamic>> schedules = [];
 
-    for (final enrollment in enrollmentSnapshot.docs) {
-      final classId = enrollment.data()['classId'];
-
-      if (classId == null) continue;
-
-      final classDoc = await _db
-          .collection('classes')
-          .doc(classId.toString())
-          .get();
-
-      if (!classDoc.exists) continue;
-
+    for (final classDoc in classDocs) {
       final classData = classDoc.data();
 
       if (classData == null) continue;

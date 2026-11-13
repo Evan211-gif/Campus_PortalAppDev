@@ -37,7 +37,7 @@ class ClubsPage extends StatelessWidget {
 
         final role = roleSnapshot.data?.data()?['role'];
 
-        if (role != 'admin' && role != 'club_advisor' && role != 'student') {
+        if (role != 'admin' && role != 'teacher' && role != 'student') {
           return const Scaffold(
             body: Center(child: Text('Your account has no valid role.')),
           );
@@ -50,7 +50,7 @@ class ClubsPage extends StatelessWidget {
 
   Widget buildClubsPage(BuildContext context, String userId, String role) {
     final isAdmin = role == 'admin';
-    final canCreate = isAdmin || role == 'club_advisor';
+    final canCreate = isAdmin || role == 'teacher';
 
     final clubsCollection = FirebaseFirestore.instance.collection('clubs');
 
@@ -58,7 +58,7 @@ class ClubsPage extends StatelessWidget {
 
     if (isAdmin) {
       query = clubsCollection;
-    } else if (role == 'club_advisor') {
+    } else if (role == 'teacher') {
       query = clubsCollection.where('advisorId', isEqualTo: userId);
     } else {
       query = clubsCollection.where('status', isEqualTo: 'approved');
@@ -135,7 +135,7 @@ class ClubsPage extends StatelessWidget {
     final advisorEmail = data['advisorEmail'] ?? '';
 
     final isAdmin = role == 'admin';
-    final isAdvisor = role == 'club_advisor';
+    final isAdvisor = role == 'teacher';
     final isStudent = role == 'student';
 
     final advisorOwnsClub = isAdvisor && advisorId == userId;
@@ -669,6 +669,11 @@ class ClubsPage extends StatelessWidget {
           .get();
 
       final isAdminUser = userDoc.data()?['role'] == 'admin';
+      final isTeacherUser = userDoc.data()?['role'] == 'teacher';
+
+      if (!isAdminUser && !isTeacherUser) {
+        throw Exception('You are not authorized to manage memberships.');
+      }
 
       List<DocumentReference<Map<String, dynamic>>> relatedRefs = [];
 
@@ -704,7 +709,7 @@ class ClubsPage extends StatelessWidget {
           throw Exception('The membership status has changed. Please retry.');
         }
 
-        final membershipData = membershipDoc.data();
+        final membershipData = membershipDoc?.data();
 
         final approvedClubId = membershipData?['approvedClubId'] as String?;
 
@@ -733,6 +738,8 @@ class ClubsPage extends StatelessWidget {
           transaction.set(membershipRef, {
             'pendingCount': 0,
             'approvedClubId': clubId,
+            'managedRequestId': requestId,
+            'managedClubId': clubId,
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
         } else if (status == 'rejected') {
@@ -743,6 +750,8 @@ class ClubsPage extends StatelessWidget {
           transaction.set(membershipRef, {
             'pendingCount': pendingCount,
             'approvedClubId': approvedClubId,
+            'managedRequestId': requestId,
+            'managedClubId': clubId,
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
         } else if (status == 'removed') {
@@ -758,6 +767,8 @@ class ClubsPage extends StatelessWidget {
           transaction.set(membershipRef, {
             'pendingCount': 0,
             'approvedClubId': null,
+            'managedRequestId': requestId,
+            'managedClubId': clubId,
             'updatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
         }
@@ -1282,7 +1293,7 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
   Widget buildAdvisorDropdown() {
     final advisorsQuery = FirebaseFirestore.instance
         .collection('users')
-        .where('role', isEqualTo: 'club_advisor');
+        .where('role', isEqualTo: 'teacher');
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: advisorsQuery.snapshots(),
@@ -1296,7 +1307,7 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
 
         if (snapshot.hasError) {
           return const Text(
-            'Unable to load Club Advisors.',
+            'Unable to load Teachers.',
             style: TextStyle(color: Colors.red),
           );
         }
@@ -1305,10 +1316,10 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
         final advisorIds = advisors.map((doc) => doc.id).toSet();
 
         return DropdownButtonFormField<String>(
-          value: selectedAdvisorId,
+          initialValue: selectedAdvisorId,
           isExpanded: true,
           decoration: const InputDecoration(
-            labelText: 'Assign Club Advisor',
+            labelText: 'Assign Teacher',
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.person),
           ),
@@ -1401,7 +1412,7 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
         }
 
         return DropdownButtonFormField<String>(
-          value: currentCategory.isEmpty ? null : currentCategory,
+          initialValue: currentCategory.isEmpty ? null : currentCategory,
           isExpanded: true,
           decoration: const InputDecoration(
             labelText: 'Club Category',
@@ -1769,6 +1780,99 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
     try {
       final firestore = FirebaseFirestore.instance;
 
+      final activityDate = Timestamp.fromDate(
+        DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day),
+      );
+
+      const weekdays = [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
+      ];
+
+      final selectedDay = weekdays[selectedDate!.weekday - 1];
+
+      // Check active classroom schedules.
+      final classesSnapshot = await firestore
+          .collection('classes')
+          .where('status', isEqualTo: 'active')
+          .get();
+
+      for (final classDoc in classesSnapshot.docs) {
+        final classData = classDoc.data();
+        final schedules = classData['schedules'];
+
+        if (schedules is! List) continue;
+
+        for (final schedule in schedules) {
+          if (schedule is! Map) continue;
+
+          if (schedule['dayOfWeek']?.toString() != selectedDay) continue;
+          if (schedule['roomName']?.toString() != selectedRoom) continue;
+
+          final oldStart = schedule['startTimeMinutes'];
+          final oldEnd = schedule['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          if (oldStart.toInt() < end && oldEnd.toInt() > start) {
+            throw Exception(
+              '$selectedRoom is already assigned to '
+              '${classData['subjectName'] ?? 'a class'} on $selectedDay.',
+            );
+          }
+        }
+      }
+
+      // Check Campus Events on the selected date.
+      final assignmentsSnapshot = await firestore
+          .collection('room_assignments')
+          .where('date', isEqualTo: activityDate)
+          .get();
+
+      for (final assignment in assignmentsSnapshot.docs) {
+        final data = assignment.data();
+
+        if (data['roomName']?.toString() != selectedRoom) continue;
+
+        final oldStart = data['startTimeMinutes'];
+        final oldEnd = data['endTimeMinutes'];
+
+        if (oldStart is! num || oldEnd is! num) continue;
+
+        if (oldStart.toInt() < end && oldEnd.toInt() > start) {
+          throw Exception('$selectedRoom is already booked by a Campus Event.');
+        }
+      }
+
+      // Check other approved Club Activities on the selected date.
+      final activitiesSnapshot = await firestore
+          .collection('club_activities')
+          .where('status', isEqualTo: 'approved')
+          .where('date', isEqualTo: activityDate)
+          .get();
+
+      for (final activity in activitiesSnapshot.docs) {
+        final data = activity.data();
+
+        if (data['roomName']?.toString() != selectedRoom) continue;
+
+        final oldStart = data['startTimeMinutes'];
+        final oldEnd = data['endTimeMinutes'];
+
+        if (oldStart is! num || oldEnd is! num) continue;
+
+        if (oldStart.toInt() < end && oldEnd.toInt() > start) {
+          throw Exception(
+            '$selectedRoom is already booked by another Club Activity.',
+          );
+        }
+      }
+
       await firestore.collection('club_activities').add({
         'clubId': widget.clubId,
         'clubName': widget.clubName,
@@ -1776,9 +1880,7 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
         'description': descriptionController.text.trim(),
         'advisorId': widget.advisorId,
         'roomName': selectedRoom,
-        'date': Timestamp.fromDate(
-          DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day),
-        ),
+        'date': activityDate,
         'startTimeMinutes': start,
         'endTimeMinutes': end,
         'status': 'pending',
@@ -1996,14 +2098,131 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
         throw Exception('Please log in first.');
       }
 
-      await FirebaseFirestore.instance
-          .collection('club_activities')
-          .doc(activityId)
-          .update({
-            'status': status,
-            'reviewedBy': user.uid,
-            'reviewedAt': FieldValue.serverTimestamp(),
-          });
+      final firestore = FirebaseFirestore.instance;
+
+      // Validate room availability before approving.
+      if (status == 'approved') {
+        final activityDoc = await firestore
+            .collection('club_activities')
+            .doc(activityId)
+            .get();
+
+        if (!activityDoc.exists) {
+          throw Exception('Club activity not found.');
+        }
+
+        final data = activityDoc.data()!;
+        final roomName = data['roomName']?.toString();
+        final dateValue = data['date'];
+        final start = data['startTimeMinutes'];
+        final end = data['endTimeMinutes'];
+
+        if (roomName == null ||
+            dateValue is! Timestamp ||
+            start is! num ||
+            end is! num) {
+          throw Exception('Activity has incomplete room or schedule details.');
+        }
+
+        final activityDate = dateValue.toDate();
+        final activityDay = [
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+          'Sunday',
+        ][activityDate.weekday - 1];
+
+        // Check active classroom schedules.
+        final classesSnapshot = await firestore
+            .collection('classes')
+            .where('status', isEqualTo: 'active')
+            .get();
+
+        for (final classDoc in classesSnapshot.docs) {
+          final classData = classDoc.data();
+          final schedules = classData['schedules'];
+
+          if (schedules is! List) continue;
+
+          for (final schedule in schedules) {
+            if (schedule is! Map) continue;
+
+            if (schedule['dayOfWeek']?.toString() != activityDay) continue;
+            if (schedule['roomName']?.toString() != roomName) continue;
+
+            final oldStart = schedule['startTimeMinutes'];
+            final oldEnd = schedule['endTimeMinutes'];
+
+            if (oldStart is! num || oldEnd is! num) continue;
+
+            if (oldStart.toInt() < end.toInt() &&
+                oldEnd.toInt() > start.toInt()) {
+              throw Exception(
+                '$roomName is already assigned to '
+                '${classData['subjectName'] ?? 'a class'} on $activityDay.',
+              );
+            }
+          }
+        }
+
+        // Check Campus Events on the same date.
+        final assignmentsSnapshot = await firestore
+            .collection('room_assignments')
+            .where('date', isEqualTo: dateValue)
+            .get();
+
+        for (final assignment in assignmentsSnapshot.docs) {
+          final assignmentData = assignment.data();
+
+          if (assignmentData['roomName']?.toString() != roomName) continue;
+
+          final oldStart = assignmentData['startTimeMinutes'];
+          final oldEnd = assignmentData['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          if (oldStart.toInt() < end.toInt() &&
+              oldEnd.toInt() > start.toInt()) {
+            throw Exception('$roomName is already booked by a Campus Event.');
+          }
+        }
+
+        // Check other approved Club Activities on the same date.
+        final activitiesSnapshot = await firestore
+            .collection('club_activities')
+            .where('date', isEqualTo: dateValue)
+            .get();
+
+        for (final otherActivity in activitiesSnapshot.docs) {
+          if (otherActivity.id == activityId) continue;
+
+          final otherData = otherActivity.data();
+
+          if (otherData['status'] != 'approved') continue;
+          if (otherData['roomName']?.toString() != roomName) continue;
+
+          final oldStart = otherData['startTimeMinutes'];
+          final oldEnd = otherData['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          if (oldStart.toInt() < end.toInt() &&
+              oldEnd.toInt() > start.toInt()) {
+            throw Exception(
+              '$roomName is already booked by another Club Activity.',
+            );
+          }
+        }
+      }
+
+      await firestore.collection('club_activities').doc(activityId).update({
+        'status': status,
+        'reviewedBy': user.uid,
+        'reviewedAt': FieldValue.serverTimestamp(),
+      });
 
       if (!mounted) return;
 

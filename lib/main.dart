@@ -1,3 +1,5 @@
+﻿import 'login.dart';
+import 'profile.dart';
 import 'rooms.dart';
 import 'schedule.dart';
 import 'class_management.dart';
@@ -16,7 +18,6 @@ import 'firebase_options.dart';
 import 'events.dart';
 import 'clubs.dart';
 import 'announcements.dart';
-import 'login.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +35,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
   final ValueNotifier<DateTime> _selectedDate = ValueNotifier<DateTime>(
     DateTime.now(),
   );
@@ -100,10 +103,311 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  Widget _buildDashboardSearch(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(FirebaseAuth.instance.currentUser!.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final role = snapshot.data?.data()?['role'];
+        final isAdmin = role == 'admin';
+
+        final features = [
+          {'name': 'Schedule', 'icon': Icons.calendar_month, 'admin': false},
+          {'name': 'Events', 'icon': Icons.event, 'admin': false},
+          {'name': 'Announcements', 'icon': Icons.campaign, 'admin': false},
+          {'name': 'Clubs', 'icon': Icons.groups, 'admin': false},
+          {'name': 'Rooms', 'icon': Icons.meeting_room, 'admin': false},
+          {'name': 'Profile', 'icon': Icons.person, 'admin': false},
+          {'name': 'Class Management', 'icon': Icons.school, 'admin': true},
+          {
+            'name': 'Club Activity Requests',
+            'icon': Icons.event_available,
+            'admin': true,
+          },
+        ];
+
+        final results = features.where((feature) {
+          final name = feature['name'] as String;
+          final adminOnly = feature['admin'] as bool;
+
+          return name.toLowerCase().contains(_searchQuery.toLowerCase()) &&
+              (!adminOnly || isAdmin);
+        }).toList();
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+          child: Column(
+            children: [
+              TextField(
+                controller: _searchController,
+                onChanged: (value) {
+                  setState(() {
+                    _searchQuery = value.trim();
+                  });
+                },
+                decoration: InputDecoration(
+                  hintText: 'What are you looking for?',
+                  prefixIcon: const Icon(
+                    Icons.search,
+                    color: Color(0xFF245A91),
+                  ),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: const Color(0xFFF5F7FA),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(30),
+                    borderSide: const BorderSide(color: Color(0xFFDCE8F4)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(30),
+                    borderSide: const BorderSide(color: Color(0xFFDCE8F4)),
+                  ),
+                ),
+              ),
+
+              if (_searchQuery.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                if (results.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('No matching features found.'),
+                  )
+                else
+                  ...results.map((feature) {
+                    final name = feature['name'] as String;
+
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(
+                        feature['icon'] as IconData,
+                        color: const Color(0xFF245A91),
+                      ),
+                      title: Text(name),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                      onTap: () {
+                        Widget? page;
+
+                        switch (name) {
+                          case 'Schedule':
+                            page = const SchedulePage();
+                            break;
+                          case 'Events':
+                            page = const EventsPage();
+                            break;
+                          case 'Announcements':
+                            page = const AnnouncementsPage();
+                            break;
+                          case 'Clubs':
+                            page = const ClubsPage();
+                            break;
+                          case 'Rooms':
+                            page = const RoomsPage();
+                            break;
+                          case 'Profile':
+                            page = const ProfilePage();
+                            break;
+                          case 'Class Management':
+                            page = const ClassManagementPage();
+                            break;
+                          case 'Club Activity Requests':
+                            page = const ClubActivityApprovalPage();
+                            break;
+                        }
+
+                        if (page != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => page!),
+                          );
+                        }
+                      },
+                    );
+                  }),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNavigationDrawer(BuildContext context) {
+    return Drawer(
+      child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('users')
+            .doc(FirebaseAuth.instance.currentUser!.uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          final userData = snapshot.data?.data();
+          final role = userData?['role'];
+          final name = userData?['name'] ?? 'Campus User';
+          final isAdmin = role == 'admin';
+
+          void openPage(Widget page) {
+            Navigator.pop(context);
+            Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+          }
+
+          return ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              DrawerHeader(
+                decoration: const BoxDecoration(color: Color(0xFF245A91)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Image.asset('assets/aces_logo.png', height: 65),
+                    const SizedBox(height: 10),
+                    Text(
+                      name.toString(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      role?.toString().toUpperCase() ?? '',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.dashboard),
+                title: const Text('Dashboard'),
+                onTap: () => Navigator.pop(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.calendar_month),
+                title: const Text('Schedule'),
+                onTap: () => openPage(const SchedulePage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.event),
+                title: const Text('Events'),
+                onTap: () => openPage(const EventsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.campaign),
+                title: const Text('Announcements'),
+                onTap: () => openPage(const AnnouncementsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.groups),
+                title: const Text('Clubs'),
+                onTap: () => openPage(const ClubsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.meeting_room),
+                title: const Text('Rooms'),
+                onTap: () => openPage(const RoomsPage()),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person),
+                title: const Text('Profile'),
+                onTap: () => openPage(const ProfilePage()),
+              ),
+              if (isAdmin) ...[
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.school),
+                  title: const Text('Class Management'),
+                  onTap: () => openPage(const ClassManagementPage()),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.event_available),
+                  title: const Text('Club Activity Requests'),
+                  onTap: () => openPage(const ClubActivityApprovalPage()),
+                ),
+              ],
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: const Text('Logout'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await FirebaseAuth.instance.signOut();
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF245A91),
+          primary: const Color(0xFF245A91),
+          secondary: const Color(0xFF2878D0),
+          surface: Colors.white,
+          error: const Color(0xFFC73535),
+        ),
+
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF245A91),
+          foregroundColor: Colors.white,
+          elevation: 0,
+          centerTitle: true,
+        ),
+
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF245A91),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ),
+
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFDCE8F4)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFDCE8F4)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFF245A91), width: 2),
+          ),
+        ),
+
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: Color(0xFF245A91),
+        ),
+      ),
+
       home: StreamBuilder<User?>(
         stream: _authStream,
         builder: (context, snapshot) {
@@ -119,6 +423,7 @@ class _MyAppState extends State<MyApp> {
 
           return Scaffold(
             backgroundColor: Colors.white,
+            drawer: _buildNavigationDrawer(context),
             body: SingleChildScrollView(
               child: Column(
                 children: [
@@ -132,7 +437,7 @@ class _MyAppState extends State<MyApp> {
                         bottomRight: Radius.circular(35),
                       ),
                       image: DecorationImage(
-                        image: AssetImage('assets/building.png'),
+                        image: AssetImage('assets/aces_building.png'),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -142,10 +447,22 @@ class _MyAppState extends State<MyApp> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Icon(
-                              Icons.menu,
-                              color: Colors.blue,
-                              size: 30,
+                            Builder(
+                              builder: (menuContext) => IconButton(
+                                style: IconButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(10),
+                                ),
+                                icon: const Icon(
+                                  Icons.menu,
+                                  color: Color(0xFF245A91),
+                                  size: 26,
+                                ),
+                                onPressed: () {
+                                  Scaffold.of(menuContext).openDrawer();
+                                },
+                              ),
                             ),
                             const Text(
                               'Campus Portal',
@@ -165,26 +482,8 @@ class _MyAppState extends State<MyApp> {
                       ),
                     ),
                   ),
-
-                  // SEARCH BAR
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: TextField(
-                      decoration: InputDecoration(
-                        hintText: 'What are you looking for?',
-                        prefixIcon: const Icon(
-                          Icons.search,
-                          color: Color(0xFF991B1B),
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(30),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                  ),
+                  // FUNCTIONAL DASHBOARD SEARCH
+                  _buildDashboardSearch(context),
 
                   // EXPLORE CAMPUS
                   Padding(
@@ -201,10 +500,6 @@ class _MyAppState extends State<MyApp> {
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
-                        ),
-                        const Text(
-                          'See all',
-                          style: TextStyle(color: Color(0xFF991B1B)),
                         ),
                       ],
                     ),
@@ -233,7 +528,7 @@ class _MyAppState extends State<MyApp> {
                         padding: const EdgeInsets.all(4),
                         crossAxisSpacing: 9,
                         mainAxisSpacing: 9,
-                        childAspectRatio: 1.5,
+                        childAspectRatio: 0.85,
                         children: [
                           _featureCard(
                             Icons.calendar_month,
@@ -301,7 +596,18 @@ class _MyAppState extends State<MyApp> {
                             },
                           ),
 
-                          _featureCard(Icons.person, 'Profile'),
+                          _featureCard(
+                            Icons.person,
+                            'Profile',
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const ProfilePage(),
+                                ),
+                              );
+                            },
+                          ),
 
                           // ADMIN ONLY
                           if (isAdmin) ...[
@@ -379,7 +685,11 @@ class _MyAppState extends State<MyApp> {
                   // CAMPUS CALENDAR
                   const Text(
                     'Campus Calendar',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF245A91),
+                    ),
                   ),
 
                   const SizedBox(height: 12),
@@ -433,10 +743,14 @@ class _MyAppState extends State<MyApp> {
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: const Color(0xFFDCE8F4),
+                                    width: 1,
+                                  ),
                                   boxShadow: const [
                                     BoxShadow(
-                                      color: Colors.black12,
-                                      blurRadius: 6,
+                                      color: Color(0x10000000),
+                                      blurRadius: 8,
                                       offset: Offset(0, 3),
                                     ),
                                   ],
@@ -474,7 +788,7 @@ class _MyAppState extends State<MyApp> {
                                       },
                                       calendarStyle: const CalendarStyle(
                                         selectedDecoration: BoxDecoration(
-                                          color: Color(0xFF991B1B),
+                                          color: Color(0xFF245A91),
                                           shape: BoxShape.circle,
                                         ),
                                         todayDecoration: BoxDecoration(
@@ -591,6 +905,7 @@ class _MyAppState extends State<MyApp> {
                                         style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15,
+                                          color: Color(0xFF245A91),
                                         ),
                                       ),
                                     ),
@@ -654,27 +969,40 @@ class _MyAppState extends State<MyApp> {
 
   Widget _featureCard(IconData icon, String title, {VoidCallback? onTap}) {
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
+      color: const Color(0xFFEAF2FA),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(16),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFDCE8F4), width: 1),
+          ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20, color: Colors.red),
-              const SizedBox(height: 4),
+              Container(
+                height: 44,
+                width: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, size: 25, color: const Color(0xFF245A91)),
+              ),
+              const SizedBox(height: 9),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Text(
                   title,
                   maxLines: 1,
                   style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: Color(0xFF334155),
                   ),
                 ),
               ),
@@ -898,7 +1226,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
     return _buildCard(
       child: Row(
         children: [
-          const Icon(Icons.campaign, size: 38, color: Color(0xFF991B1B)),
+          const Icon(Icons.campaign, size: 38, color: Color(0xFF245A91)),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -911,7 +1239,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                       child: Text(
                         'ANNOUNCEMENT',
                         style: TextStyle(
-                          color: Color(0xFF991B1B),
+                          color: Color(0xFF245A91),
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                         ),
@@ -1025,7 +1353,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
             Text(
               'UPCOMING EVENT',
               style: TextStyle(
-                color: Color(0xFF991B1B),
+                color: Color(0xFF245A91),
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
               ),
@@ -1051,7 +1379,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
     return _buildCard(
       child: Row(
         children: [
-          const Icon(Icons.event, size: 38, color: Color(0xFF991B1B)),
+          const Icon(Icons.event, size: 38, color: Color(0xFF245A91)),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -1061,7 +1389,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                 const Text(
                   'UPCOMING EVENT',
                   style: TextStyle(
-                    color: Color(0xFF991B1B),
+                    color: Color(0xFF245A91),
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
@@ -1077,7 +1405,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                   ),
                 ),
                 const SizedBox(height: 5),
-                Text('$formattedDate • ${startTime.format(context)}'),
+                Text('$formattedDate \u2022 ${startTime.format(context)}'),
                 Text(
                   data['location'] ?? 'Location not specified',
                   maxLines: 1,
@@ -1145,14 +1473,14 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                     const Text(
                       'CAMPUS WEATHER',
                       style: TextStyle(
-                        color: Color(0xFF991B1B),
+                        color: Color(0xFF245A91),
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${temperature.round()}°C',
+                      '${temperature.round()}\u00B0C',
                       style: const TextStyle(
                         fontSize: 25,
                         fontWeight: FontWeight.bold,
@@ -1161,7 +1489,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                     Text(weatherDescription(code)),
                     const SizedBox(height: 2),
                     Text(
-                      'Feels like ${feelsLike.round()}°C • Humidity $humidity%',
+                      'Feels like ${feelsLike.round()}\u00B0C \u2022 Humidity $humidity%',
                       style: const TextStyle(fontSize: 10),
                     ),
                     Text(
@@ -1250,7 +1578,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
                   height: 8,
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? const Color(0xFF991B1B)
+                        ? const Color(0xFF245A91)
                         : Colors.grey.shade400,
                     borderRadius: BorderRadius.circular(10),
                   ),

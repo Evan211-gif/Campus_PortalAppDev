@@ -631,6 +631,101 @@ class _EventFormDialogState extends State<EventFormDialog> {
         }
       }
 
+      // Check active regular class schedules for the selected weekday and room.
+      final classesSnapshot = await firestore
+          .collection('classes')
+          .where('status', isEqualTo: 'active')
+          .get();
+
+      const weekdays = [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
+      ];
+
+      final selectedDay = weekdays[eventDate.weekday - 1];
+
+      for (final classDoc in classesSnapshot.docs) {
+        final classData = classDoc.data();
+        final schedules = classData['schedules'];
+
+        if (schedules is! List) continue;
+
+        for (final schedule in schedules) {
+          if (schedule is! Map) continue;
+
+          if (schedule['dayOfWeek']?.toString() != selectedDay) continue;
+          if (schedule['roomName']?.toString() != selectedLocation) {
+            continue;
+          }
+
+          final oldStart = schedule['startTimeMinutes'];
+          final oldEnd = schedule['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          final overlaps =
+              oldStart.toInt() < endMinutes && oldEnd.toInt() > startMinutes;
+
+          if (overlaps) {
+            if (!mounted) return;
+            setState(() => isSaving = false);
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '$selectedLocation is already assigned to '
+                  '${classData['subjectName'] ?? 'a class'} on $selectedDay.',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+        }
+      }
+
+      // Check approved Club Activities on the selected date.
+      final activitiesSnapshot = await firestore
+          .collection('club_activities')
+          .where('status', isEqualTo: 'approved')
+          .where('date', isEqualTo: dateTimestamp)
+          .get();
+
+      for (final activity in activitiesSnapshot.docs) {
+        final data = activity.data();
+
+        if (data['roomName']?.toString() != selectedLocation) continue;
+
+        final oldStart = data['startTimeMinutes'];
+        final oldEnd = data['endTimeMinutes'];
+
+        if (oldStart is! num || oldEnd is! num) continue;
+
+        final overlaps =
+            oldStart.toInt() < endMinutes && oldEnd.toInt() > startMinutes;
+
+        if (overlaps) {
+          if (!mounted) return;
+          setState(() => isSaving = false);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '$selectedLocation is already booked for '
+                '${data['activityTitle'] ?? 'a Club Activity'}.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+
       // STEP 2: Prepare the event and room assignment references.
       final eventRef = isEditing
           ? firestore.collection('events').doc(widget.eventId)
@@ -723,7 +818,7 @@ class _EventFormDialogState extends State<EventFormDialog> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: selectedLocation,
+                initialValue: selectedLocation,
                 isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Location',
