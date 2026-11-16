@@ -527,7 +527,8 @@ class _RoomsPageState extends State<RoomsPage> {
           'Room Availability',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFF245A91),
+        foregroundColor: Colors.white,
         elevation: 0,
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -725,3 +726,4 @@ class _RoomsPageState extends State<RoomsPage> {
     );
   }
 }
+

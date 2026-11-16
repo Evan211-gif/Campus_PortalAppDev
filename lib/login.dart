@@ -1,8 +1,8 @@
-
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -34,10 +34,50 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
+
+      final user = credential.user;
+
+      if (user == null) {
+        throw Exception('Unable to verify your account.');
+      }
+
+      final userDocument = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDocument.exists) {
+        await FirebaseAuth.instance.signOut();
+        throw Exception('User account record not found.');
+      }
+
+      final userData = userDocument.data()!;
+      final role = userData['role']?.toString() ?? '';
+      final status = userData['status']?.toString() ?? 'active';
+
+      if ((role == 'student' || role == 'teacher') && status != 'active') {
+        await FirebaseAuth.instance.signOut();
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Your account has been deactivated. Please contact the administrator.',
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+
+        return;
+      }
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } on FirebaseAuthException catch (error) {
       String message = 'Login failed. Please try again.';
 
@@ -55,17 +95,18 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red.shade700,
-        ),
+        SnackBar(content: Text(message), backgroundColor: Colors.red.shade700),
       );
     } catch (error) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Something went wrong: $error'),
+          content: Text(
+            error.toString().contains('User account record not found')
+                ? 'User account record not found. Please contact the administrator.'
+                : 'Something went wrong. Please try again.',
+          ),
           backgroundColor: Colors.red.shade700,
         ),
       );
@@ -93,20 +134,12 @@ class _LoginPageState extends State<LoginPage> {
         children: [
           // BLURRED SCHOOL BACKGROUND
           ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(
-              sigmaX: 4,
-              sigmaY: 4,
-            ),
-            child: Image.asset(
-              'assets/aces_building.png',
-              fit: BoxFit.cover,
-            ),
+            imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+            child: Image.asset('assets/aces_building.png', fit: BoxFit.cover),
           ),
 
           // DARK BLUE OVERLAY
-          Container(
-            color: const Color(0xFF102F4D).withValues(alpha: 0.65),
-          ),
+          Container(color: const Color(0xFF102F4D).withValues(alpha: 0.65)),
 
           // LOGIN CONTENT
           SafeArea(
@@ -239,8 +272,7 @@ class _LoginPageState extends State<LoginPage> {
                                   ),
                                 ),
                                 validator: (value) {
-                                  if (value == null ||
-                                      value.trim().isEmpty) {
+                                  if (value == null || value.trim().isEmpty) {
                                     return 'Please enter your email';
                                   }
                                   return null;
@@ -365,10 +397,7 @@ class _LoginPageState extends State<LoginPage> {
                       const Text(
                         'Your Campus. Your Community. Your Future.',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11,
-                        ),
+                        style: TextStyle(color: Colors.white70, fontSize: 11),
                       ),
                     ],
                   ),

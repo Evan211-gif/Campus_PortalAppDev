@@ -1,8 +1,10 @@
 ﻿import 'login.dart';
+import 'landing_page.dart';
 import 'profile.dart';
 import 'rooms.dart';
 import 'schedule.dart';
 import 'class_management.dart';
+import 'user_management.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -24,6 +26,8 @@ Future<void> main() async {
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  debugPrint('FLUTTER FIREBASE PROJECT: ${Firebase.app().options.projectId}');
+
   runApp(const MyApp());
 }
 
@@ -37,6 +41,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  int _selectedIndex = 0;
   final ValueNotifier<DateTime> _selectedDate = ValueNotifier<DateTime>(
     DateTime.now(),
   );
@@ -51,7 +56,18 @@ class _MyAppState extends State<MyApp> {
   final ValueNotifier<bool> _holidaysLoading = ValueNotifier(false);
 
   late final Stream<User?> _authStream = FirebaseAuth.instance
-      .authStateChanges();
+      .authStateChanges()
+      .map((user) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _selectedIndex != 0) {
+            setState(() {
+              _selectedIndex = 0;
+            });
+          }
+        });
+
+        return user;
+      });
 
   @override
   void initState() {
@@ -342,6 +358,11 @@ class _MyAppState extends State<MyApp> {
                 title: const Text('Logout'),
                 onTap: () async {
                   Navigator.pop(context);
+
+                  setState(() {
+                    _selectedIndex = 0;
+                  });
+
                   await FirebaseAuth.instance.signOut();
                 },
               ),
@@ -418,548 +439,685 @@ class _MyAppState extends State<MyApp> {
           }
 
           if (snapshot.data == null) {
-            return const LoginPage();
+            return const LandingPage();
           }
 
           return Scaffold(
             backgroundColor: Colors.white,
-            drawer: _buildNavigationDrawer(context),
-            body: SingleChildScrollView(
-              child: Column(
-                children: [
-                  // CAMPUS HEADER
-                  Container(
-                    height: 210,
-                    width: double.infinity,
-                    decoration: const BoxDecoration(
-                      borderRadius: BorderRadius.only(
-                        bottomLeft: Radius.circular(35),
-                        bottomRight: Radius.circular(35),
-                      ),
-                      image: DecorationImage(
-                        image: AssetImage('assets/aces_building.png'),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                    child: SafeArea(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Builder(
-                              builder: (menuContext) => IconButton(
-                                style: IconButton.styleFrom(
-                                  backgroundColor: Colors.white,
-                                  shape: const CircleBorder(),
-                                  padding: const EdgeInsets.all(10),
-                                ),
-                                icon: const Icon(
-                                  Icons.menu,
-                                  color: Color(0xFF245A91),
-                                  size: 26,
-                                ),
-                                onPressed: () {
-                                  Scaffold.of(menuContext).openDrawer();
-                                },
-                              ),
-                            ),
-                            const Text(
-                              'Campus Portal',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 21,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Icon(
-                              Icons.notifications,
-                              color: Colors.blue,
-                              size: 28,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  // FUNCTIONAL DASHBOARD SEARCH
-                  _buildDashboardSearch(context),
 
-                  // EXPLORE CAMPUS
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            body: IndexedStack(
+              index: _selectedIndex,
+              children: [
+                Scaffold(
+                  backgroundColor: Colors.white,
+                  body: SingleChildScrollView(
+                    child: Column(
                       children: [
-                        const Text(
-                          'Explore Campus',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // CAMPUS FEATURES
-
-                  // CAMPUS FEATURES
-                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('users')
-                        .doc(FirebaseAuth.instance.currentUser!.uid)
-                        .snapshots(),
-                    builder: (context, userSnapshot) {
-                      if (!userSnapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      final role = userSnapshot.data?.data()?['role'];
-                      final isAdmin = role == 'admin';
-
-                      return GridView.count(
-                        crossAxisCount: 4,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(4),
-                        crossAxisSpacing: 9,
-                        mainAxisSpacing: 9,
-                        childAspectRatio: 0.85,
-                        children: [
-                          _featureCard(
-                            Icons.calendar_month,
-                            'Schedule',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const SchedulePage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          _featureCard(
-                            Icons.event,
-                            'Events',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const EventsPage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          _featureCard(
-                            Icons.campaign,
-                            'Announcements',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const AnnouncementsPage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          _featureCard(
-                            Icons.groups,
-                            'Clubs',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const ClubsPage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          _featureCard(
-                            Icons.meeting_room,
-                            'Rooms',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const RoomsPage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          _featureCard(
-                            Icons.person,
-                            'Profile',
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const ProfilePage(),
-                                ),
-                              );
-                            },
-                          ),
-
-                          // ADMIN ONLY
-                          if (isAdmin) ...[
-                            _featureCard(
-                              Icons.school,
-                              'Class Management',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const ClassManagementPage(),
-                                  ),
-                                );
-                              },
+                        // CAMPUS HEADER
+                        Container(
+                          height: 210,
+                          width: double.infinity,
+                          decoration: const BoxDecoration(
+                            borderRadius: BorderRadius.only(
+                              bottomLeft: Radius.circular(35),
+                              bottomRight: Radius.circular(35),
                             ),
-
-                            _featureCard(
-                              Icons.event_available,
-                              'Club Activity Requests',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const ClubActivityApprovalPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-
-                          _featureCard(
-                            Icons.logout,
-                            'Logout',
-                            onTap: () async {
-                              try {
-                                await FirebaseAuth.instance.signOut();
-                              } catch (error) {
-                                if (!context.mounted) return;
-
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Logout failed: $error'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                              }
-                            },
                           ),
-                        ],
-                      );
-                    },
-                  ),
-
-                  // CAMPUS UPDATES
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Campus Updates',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const DashboardAnnouncements(),
-
-                  const SizedBox(height: 20),
-
-                  // CAMPUS CALENDAR
-                  const Text(
-                    'Campus Calendar',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF245A91),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('events')
-                        .orderBy('date')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      final eventMap = <DateTime, List<Map<String, dynamic>>>{};
-
-                      if (snapshot.hasData) {
-                        for (final doc in snapshot.data!.docs) {
-                          final data = doc.data();
-
-                          if (data['status'] == 'archived') continue;
-                          if (data['date'] is! Timestamp) continue;
-
-                          final date = _dateOnly(
-                            (data['date'] as Timestamp).toDate(),
-                          );
-
-                          eventMap.putIfAbsent(date, () => []);
-
-                          eventMap[date]!.add({
-                            'type': 'event',
-                            'title': data['title'] ?? 'Campus Event',
-                          });
-                        }
-                      }
-
-                      return ValueListenableBuilder<
-                        Map<DateTime, List<Map<String, dynamic>>>
-                      >(
-                        valueListenable: _holidaysByDate,
-                        builder: (context, holidayMap, child) {
-                          return ValueListenableBuilder<DateTime>(
-                            valueListenable: _selectedDate,
-                            builder: (context, selectedDate, child) {
-                              final selectedEntries = [
-                                ...(eventMap[_dateOnly(selectedDate)] ?? []),
-                                ...(holidayMap[_dateOnly(selectedDate)] ?? []),
-                              ];
-
-                              return Container(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 16,
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.only(
+                              bottomLeft: Radius.circular(35),
+                              bottomRight: Radius.circular(35),
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                // SCHOOL BUILDING BACKGROUND
+                                Image.asset(
+                                  'assets/aces_building.png',
+                                  fit: BoxFit.cover,
                                 ),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: const Color(0xFFDCE8F4),
-                                    width: 1,
-                                  ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Color(0x10000000),
-                                      blurRadius: 8,
-                                      offset: Offset(0, 3),
+
+                                // SUBTLE DARK NAVY OVERLAY
+                                Container(color: const Color(0x550B2340)),
+
+                                // CENTER TITLE
+                                Center(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 22,
+                                      vertical: 12,
                                     ),
-                                  ],
-                                ),
-                                child: Column(
-                                  children: [
-                                    TableCalendar<Map<String, dynamic>>(
-                                      firstDay: DateTime(2020),
-                                      lastDay: DateTime(2035),
-                                      focusedDay: _focusedDate,
-                                      selectedDayPredicate: (day) =>
-                                          isSameDay(day, selectedDate),
-                                      eventLoader: (day) {
-                                        final key = _dateOnly(day);
-
-                                        return [
-                                          ...(eventMap[key] ?? []),
-                                          ...(holidayMap[key] ?? []),
-                                        ];
-                                      },
-                                      onDaySelected: (selected, focused) {
-                                        _selectedDate.value = selected;
-                                        setState(() {
-                                          _focusedDate = focused;
-                                        });
-                                      },
-                                      onPageChanged: (focused) {
-                                        _focusedDate = focused;
-
-                                        if (_loadedHolidayYear !=
-                                            focused.year) {
-                                          _loadedHolidayYear = focused.year;
-                                          _loadHolidays(focused.year);
-                                        }
-                                      },
-                                      calendarStyle: const CalendarStyle(
-                                        selectedDecoration: BoxDecoration(
-                                          color: Color(0xFF245A91),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        todayDecoration: BoxDecoration(
-                                          color: Colors.black26,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        markersMaxCount: 2,
-                                        outsideDaysVisible: false,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0x990B2340),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: Colors.white.withOpacity(0.25),
                                       ),
-                                      headerStyle: const HeaderStyle(
-                                        formatButtonVisible: false,
-                                        titleCentered: true,
-                                      ),
-                                      calendarBuilders:
-                                          CalendarBuilders<
-                                            Map<String, dynamic>
-                                          >(
-                                            markerBuilder: (context, day, entries) {
-                                              if (entries.isEmpty) return null;
-
-                                              final hasEvent = entries.any(
-                                                (item) =>
-                                                    item['type'] == 'event',
-                                              );
-
-                                              final hasHoliday = entries.any(
-                                                (item) =>
-                                                    item['type'] == 'holiday',
-                                              );
-
-                                              return Positioned(
-                                                bottom: 4,
-                                                child: Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    if (hasEvent)
-                                                      Container(
-                                                        width: 7,
-                                                        height: 7,
-                                                        margin:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 1,
-                                                            ),
-                                                        decoration:
-                                                            const BoxDecoration(
-                                                              color: Color(
-                                                                0xFF2878D0,
-                                                              ),
-                                                              shape: BoxShape
-                                                                  .circle,
-                                                            ),
-                                                      ),
-                                                    if (hasHoliday)
-                                                      Container(
-                                                        width: 7,
-                                                        height: 7,
-                                                        margin:
-                                                            const EdgeInsets.symmetric(
-                                                              horizontal: 1,
-                                                            ),
-                                                        decoration:
-                                                            const BoxDecoration(
-                                                              color: Color(
-                                                                0xFF269B59,
-                                                              ),
-                                                              shape: BoxShape
-                                                                  .circle,
-                                                            ),
-                                                      ),
-                                                  ],
-                                                ),
-                                              );
-                                            },
-                                          ),
                                     ),
-
-                                    const SizedBox(height: 12),
-
-                                    const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(
-                                          Icons.circle,
-                                          size: 10,
-                                          color: Color(0xFF2878D0),
+                                        const Text(
+                                          'Campus Portal',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 23,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 0.5,
+                                          ),
                                         ),
-                                        SizedBox(width: 5),
-                                        Text(
-                                          'Events',
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                        SizedBox(width: 18),
-                                        Icon(
-                                          Icons.circle,
-                                          size: 10,
-                                          color: Color(0xFF269B59),
-                                        ),
-                                        SizedBox(width: 5),
-                                        Text(
-                                          'Holidays',
-                                          style: TextStyle(fontSize: 12),
+                                        const SizedBox(height: 7),
+
+                                        // GOLD ACCENT
+                                        Container(
+                                          height: 3,
+                                          width: 55,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF2C14E),
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
+                                  ),
+                                ),
 
-                                    const Divider(height: 24),
-
-                                    Align(
-                                      alignment: Alignment.centerLeft,
-                                      child: Text(
-                                        'Activities on ${selectedDate.month}/${selectedDate.day}/${selectedDate.year}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
-                                          color: Color(0xFF245A91),
-                                        ),
+                                // TOP NOTIFICATION ICON
+                                SafeArea(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(20),
+                                    child: Align(
+                                      alignment: Alignment.topRight,
+                                      child: Icon(
+                                        Icons.notifications,
+                                        color: Colors.white,
+                                        size: 28,
                                       ),
                                     ),
-
-                                    const SizedBox(height: 8),
-
-                                    if (selectedEntries.isEmpty)
-                                      const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: Text(
-                                          'No events or holidays on this date.',
-                                        ),
-                                      )
-                                    else
-                                      ...selectedEntries.map((entry) {
-                                        final isHoliday =
-                                            entry['type'] == 'holiday';
-
-                                        final color = isHoliday
-                                            ? const Color(0xFF269B59)
-                                            : const Color(0xFF2878D0);
-
-                                        return ListTile(
-                                          dense: true,
-                                          contentPadding: EdgeInsets.zero,
-                                          leading: Icon(
-                                            isHoliday
-                                                ? Icons.celebration
-                                                : Icons.event,
-                                            color: color,
-                                          ),
-                                          title: Text(
-                                            entry['title'].toString(),
-                                          ),
-                                          subtitle: Text(
-                                            isHoliday
-                                                ? 'Philippine Holiday'
-                                                : 'Campus Event',
-                                          ),
-                                        );
-                                      }),
-                                  ],
+                                  ),
                                 ),
-                              );
-                            },
-                          );
-                        },
-                      );
-                    },
-                  ),
+                              ],
+                            ),
+                          ),
+                        ),
 
-                  const SizedBox(height: 20),
-                ],
-              ),
+                        // WELCOME BACK GREETING
+                        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                          stream: FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(FirebaseAuth.instance.currentUser!.uid)
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            final userData = snapshot.data?.data();
+
+                            final firstName =
+                                userData?['firstName']
+                                        ?.toString()
+                                        .trim()
+                                        .isNotEmpty ==
+                                    true
+                                ? userData!['firstName'].toString().trim()
+                                : (userData?['name']
+                                          ?.toString()
+                                          .split(' ')
+                                          .first ??
+                                      'Campus User');
+
+                            return Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'WELCOME TO ACES TAGUM COLLEGE',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.2,
+                                      color: Color(0xFFB58A27),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Welcome Back, $firstName!',
+                                    style: const TextStyle(
+                                      fontSize: 23,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF123B68),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  const Text(
+                                    'Ready to explore your campus today?',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+
+                        // FUNCTIONAL DASHBOARD SEARCH
+                        _buildDashboardSearch(context),
+
+                        // EXPLORE CAMPUS
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Explore Campus',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // CAMPUS FEATURES
+
+                        // CAMPUS FEATURES
+                        StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                          stream: FirebaseFirestore.instance
+                              .collection('users')
+                              .doc(FirebaseAuth.instance.currentUser!.uid)
+                              .snapshots(),
+                          builder: (context, userSnapshot) {
+                            if (!userSnapshot.hasData) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+
+                            final role = userSnapshot.data?.data()?['role'];
+                            final isAdmin = role == 'admin';
+
+                            return GridView.count(
+                              crossAxisCount: 4,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              padding: const EdgeInsets.all(4),
+                              crossAxisSpacing: 9,
+                              mainAxisSpacing: 9,
+                              childAspectRatio: 0.85,
+                              children: [
+                                _featureCard(
+                                  Icons.calendar_month,
+                                  'Schedule',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const SchedulePage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                _featureCard(
+                                  Icons.event,
+                                  'Events',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const EventsPage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                _featureCard(
+                                  Icons.campaign,
+                                  'Announcements',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const AnnouncementsPage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                _featureCard(
+                                  Icons.groups,
+                                  'Clubs',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => const ClubsPage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                _featureCard(
+                                  Icons.meeting_room,
+                                  'Rooms',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => const RoomsPage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+
+                                // ADMIN ONLY
+                                if (isAdmin) ...[
+                                  _featureCard(
+                                    Icons.school,
+                                    'Class Management',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const ClassManagementPage(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+
+                                  _featureCard(
+                                    Icons.event_available,
+                                    'Club Activity Requests',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const ClubActivityApprovalPage(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+
+                                  _featureCard(
+                                    Icons.manage_accounts,
+                                    'User Management',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const UserManagementPage(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                                _featureCard(
+                                  Icons.person,
+                                  'Profile',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            const ProfilePage(),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+
+                        // CAMPUS UPDATES
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Campus Updates',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const DashboardAnnouncements(),
+
+                        const SizedBox(height: 20),
+
+                        // CAMPUS CALENDAR
+                        const Text(
+                          'Campus Calendar',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF245A91),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: FirebaseFirestore.instance
+                              .collection('events')
+                              .orderBy('date')
+                              .snapshots(),
+                          builder: (context, snapshot) {
+                            final eventMap =
+                                <DateTime, List<Map<String, dynamic>>>{};
+
+                            if (snapshot.hasData) {
+                              for (final doc in snapshot.data!.docs) {
+                                final data = doc.data();
+
+                                if (data['status'] == 'archived') continue;
+                                if (data['date'] is! Timestamp) continue;
+
+                                final date = _dateOnly(
+                                  (data['date'] as Timestamp).toDate(),
+                                );
+
+                                eventMap.putIfAbsent(date, () => []);
+
+                                eventMap[date]!.add({
+                                  'type': 'event',
+                                  'title': data['title'] ?? 'Campus Event',
+                                });
+                              }
+                            }
+
+                            return ValueListenableBuilder<
+                              Map<DateTime, List<Map<String, dynamic>>>
+                            >(
+                              valueListenable: _holidaysByDate,
+                              builder: (context, holidayMap, child) {
+                                return ValueListenableBuilder<DateTime>(
+                                  valueListenable: _selectedDate,
+                                  builder: (context, selectedDate, child) {
+                                    final selectedEntries = [
+                                      ...(eventMap[_dateOnly(selectedDate)] ??
+                                          []),
+                                      ...(holidayMap[_dateOnly(selectedDate)] ??
+                                          []),
+                                    ];
+
+                                    return Container(
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: const Color(0xFFDCE8F4),
+                                          width: 1,
+                                        ),
+                                        boxShadow: const [
+                                          BoxShadow(
+                                            color: Color(0x10000000),
+                                            blurRadius: 8,
+                                            offset: Offset(0, 3),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          TableCalendar<Map<String, dynamic>>(
+                                            firstDay: DateTime(2020),
+                                            lastDay: DateTime(2035),
+                                            focusedDay: _focusedDate,
+                                            selectedDayPredicate: (day) =>
+                                                isSameDay(day, selectedDate),
+                                            eventLoader: (day) {
+                                              final key = _dateOnly(day);
+
+                                              return [
+                                                ...(eventMap[key] ?? []),
+                                                ...(holidayMap[key] ?? []),
+                                              ];
+                                            },
+                                            onDaySelected: (selected, focused) {
+                                              _selectedDate.value = selected;
+                                              setState(() {
+                                                _focusedDate = focused;
+                                              });
+                                            },
+                                            onPageChanged: (focused) {
+                                              _focusedDate = focused;
+
+                                              if (_loadedHolidayYear !=
+                                                  focused.year) {
+                                                _loadedHolidayYear =
+                                                    focused.year;
+                                                _loadHolidays(focused.year);
+                                              }
+                                            },
+                                            calendarStyle: const CalendarStyle(
+                                              selectedDecoration: BoxDecoration(
+                                                color: Color(0xFF245A91),
+                                                shape: BoxShape.circle,
+                                              ),
+                                              todayDecoration: BoxDecoration(
+                                                color: Colors.black26,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              markersMaxCount: 2,
+                                              outsideDaysVisible: false,
+                                            ),
+                                            headerStyle: const HeaderStyle(
+                                              formatButtonVisible: false,
+                                              titleCentered: true,
+                                            ),
+                                            calendarBuilders: CalendarBuilders<Map<String, dynamic>>(
+                                              markerBuilder: (context, day, entries) {
+                                                if (entries.isEmpty)
+                                                  return null;
+
+                                                final hasEvent = entries.any(
+                                                  (item) =>
+                                                      item['type'] == 'event',
+                                                );
+
+                                                final hasHoliday = entries.any(
+                                                  (item) =>
+                                                      item['type'] == 'holiday',
+                                                );
+
+                                                return Positioned(
+                                                  bottom: 4,
+                                                  child: Row(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      if (hasEvent)
+                                                        Container(
+                                                          width: 7,
+                                                          height: 7,
+                                                          margin:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 1,
+                                                              ),
+                                                          decoration:
+                                                              const BoxDecoration(
+                                                                color: Color(
+                                                                  0xFF2878D0,
+                                                                ),
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                              ),
+                                                        ),
+                                                      if (hasHoliday)
+                                                        Container(
+                                                          width: 7,
+                                                          height: 7,
+                                                          margin:
+                                                              const EdgeInsets.symmetric(
+                                                                horizontal: 1,
+                                                              ),
+                                                          decoration:
+                                                              const BoxDecoration(
+                                                                color: Color(
+                                                                  0xFF269B59,
+                                                                ),
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                              ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+
+                                          const SizedBox(height: 12),
+
+                                          const Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.circle,
+                                                size: 10,
+                                                color: Color(0xFF2878D0),
+                                              ),
+                                              SizedBox(width: 5),
+                                              Text(
+                                                'Events',
+                                                style: TextStyle(fontSize: 12),
+                                              ),
+                                              SizedBox(width: 18),
+                                              Icon(
+                                                Icons.circle,
+                                                size: 10,
+                                                color: Color(0xFF269B59),
+                                              ),
+                                              SizedBox(width: 5),
+                                              Text(
+                                                'Holidays',
+                                                style: TextStyle(fontSize: 12),
+                                              ),
+                                            ],
+                                          ),
+
+                                          const Divider(height: 24),
+
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(
+                                              'Activities on ${selectedDate.month}/${selectedDate.day}/${selectedDate.year}',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15,
+                                                color: Color(0xFF245A91),
+                                              ),
+                                            ),
+                                          ),
+
+                                          const SizedBox(height: 8),
+
+                                          if (selectedEntries.isEmpty)
+                                            const Padding(
+                                              padding: EdgeInsets.all(12),
+                                              child: Text(
+                                                'No events or holidays on this date.',
+                                              ),
+                                            )
+                                          else
+                                            ...selectedEntries.map((entry) {
+                                              final isHoliday =
+                                                  entry['type'] == 'holiday';
+
+                                              final color = isHoliday
+                                                  ? const Color(0xFF269B59)
+                                                  : const Color(0xFF2878D0);
+
+                                              return ListTile(
+                                                dense: true,
+                                                contentPadding: EdgeInsets.zero,
+                                                leading: Icon(
+                                                  isHoliday
+                                                      ? Icons.celebration
+                                                      : Icons.event,
+                                                  color: color,
+                                                ),
+                                                title: Text(
+                                                  entry['title'].toString(),
+                                                ),
+                                                subtitle: Text(
+                                                  isHoliday
+                                                      ? 'Philippine Holiday'
+                                                      : 'Campus Event',
+                                                ),
+                                              );
+                                            }),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SchedulePage(),
+                const EventsPage(),
+                const ProfilePage(),
+              ],
+            ),
+            bottomNavigationBar: BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              type: BottomNavigationBarType.fixed,
+              selectedItemColor: const Color(0xFF245A91),
+              unselectedItemColor: Colors.grey,
+              onTap: (index) {
+                setState(() {
+                  _selectedIndex = index;
+                });
+              },
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.home_outlined),
+                  activeIcon: Icon(Icons.home),
+                  label: 'Home',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.calendar_month_outlined),
+                  label: 'Schedule',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.event_outlined),
+                  label: 'Events',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.person_outline),
+                  label: 'Profile',
+                ),
+              ],
             ),
           );
         },

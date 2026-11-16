@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:table_calendar/table_calendar.dart';
 
 // ============================================================
 // CLUBS PAGE
@@ -53,6 +54,7 @@ class ClubsPage extends StatelessWidget {
     final canCreate = isAdmin || role == 'teacher';
 
     final clubsCollection = FirebaseFirestore.instance.collection('clubs');
+    String searchQuery = '';
 
     final Query<Map<String, dynamic>> query;
 
@@ -64,55 +66,120 @@ class ClubsPage extends StatelessWidget {
       query = clubsCollection.where('status', isEqualTo: 'approved');
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Campus Clubs'), centerTitle: true),
-      floatingActionButton: canCreate
-          ? FloatingActionButton(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (dialogContext) => ClubFormDialog(isAdmin: isAdmin),
+    final clubsStream = query.snapshots();
+
+    return StatefulBuilder(
+      builder: (context, setSearchState) {
+        return Scaffold(
+          appBar: AppBar(title: const Text('Campus Clubs'), centerTitle: true),
+          floatingActionButton: canCreate
+              ? FloatingActionButton(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (dialogContext) =>
+                          ClubFormDialog(isAdmin: isAdmin),
+                    );
+                  },
+                  child: const Icon(Icons.add),
+                )
+              : null,
+          body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: clubsStream,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snapshot.hasError) {
+                return const Center(
+                  child: Text('Something went wrong loading clubs.'),
                 );
-              },
-              child: const Icon(Icons.add),
-            )
-          : null,
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: query.snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+              }
 
-          if (snapshot.hasError) {
-            return const Center(
-              child: Text('Something went wrong loading clubs.'),
-            );
-          }
+              final clubs = snapshot.data?.docs ?? [];
 
-          final clubs = snapshot.data?.docs ?? [];
+              if (clubs.isEmpty) {
+                return const Center(child: Text('No clubs available yet.'));
+              }
 
-          if (clubs.isEmpty) {
-            return const Center(child: Text('No clubs available yet.'));
-          }
+              final filteredClubs = clubs.where((club) {
+                final name = (club.data()['name'] ?? '')
+                    .toString()
+                    .toLowerCase();
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text(
-                'Explore Clubs',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              ...clubs.map((club) {
-                return clubCard(context, club.id, club.data(), userId, role);
-              }),
-            ],
-          );
-        },
-      ),
+                return name.contains(searchQuery.trim().toLowerCase());
+              }).toList();
+
+              return ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Explore Clubs',
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // SEARCH BAR
+                  TextField(
+                    onChanged: (value) {
+                      setSearchState(() {
+                        searchQuery = value;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      hintText: 'Search clubs...',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setSearchState(() {
+                                  searchQuery = '';
+                                });
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                        horizontal: 16,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  if (role == 'student') ...[
+                    _membershipAttemptsSummary(userId),
+                    const SizedBox(height: 16),
+                  ],
+
+                  if (filteredClubs.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(child: Text('No clubs match your search.')),
+                    )
+                  else
+                    ...filteredClubs.map((club) {
+                      return clubCard(
+                        context,
+                        club.id,
+                        club.data(),
+                        userId,
+                        role,
+                      );
+                    }),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -313,11 +380,96 @@ class ClubsPage extends StatelessWidget {
                     label: const Text('Create Club Activity'),
                   ),
                 ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => AdvisorClubActivityRequestsPage(
+                            advisorId: userId,
+                            clubId: clubId,
+                            clubName: name.toString(),
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.history),
+                    label: const Text('View My Activity Requests'),
+                  ),
+                ),
               ],
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _membershipAttemptsSummary(String userId) {
+    final firestore = FirebaseFirestore.instance;
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: firestore
+          .collection('club_membership_requests')
+          .where('studentId', isEqualTo: userId)
+          .snapshots(),
+      builder: (context, requestsSnapshot) {
+        if (requestsSnapshot.hasError) {
+          return const SizedBox.shrink();
+        }
+
+        if (!requestsSnapshot.hasData) {
+          return const LinearProgressIndicator();
+        }
+
+        final requests = requestsSnapshot.data!.docs;
+
+        final attemptsUsed = requests.fold<int>(0, (total, doc) {
+          final data = doc.data();
+
+          // Cancelled requests should not count toward the blue bars.
+          if (data['status'] == 'available') {
+            return total;
+          }
+
+          final count = (data['attemptCount'] as num?)?.toInt() ?? 1;
+
+          return total + count;
+        });
+
+        final hasApprovedRequest = requests.any(
+          (doc) => doc.data()['status'] == 'approved',
+        );
+
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: firestore
+              .collection('student_memberships')
+              .doc(userId)
+              .snapshots(),
+          builder: (context, membershipSnapshot) {
+            if (membershipSnapshot.hasError) {
+              return const SizedBox.shrink();
+            }
+
+            if (!membershipSnapshot.hasData) {
+              return const LinearProgressIndicator();
+            }
+
+            final membershipData = membershipSnapshot.data!.data();
+            final approvedClubId = membershipData?['approvedClubId'] as String?;
+
+            if (hasApprovedRequest ||
+                (approvedClubId != null && approvedClubId.isNotEmpty)) {
+              return const SizedBox.shrink();
+            }
+
+            return _membershipAttemptIndicator(attemptsUsed.clamp(0, 3));
+          },
+        );
+      },
     );
   }
 
@@ -336,185 +488,428 @@ class ClubsPage extends StatelessWidget {
         .collection('student_memberships')
         .doc(userId);
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: requestRef.snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: firestore
+          .collection('club_membership_requests')
+          .where('studentId', isEqualTo: userId)
+          .snapshots(),
+      builder: (context, allRequestsSnapshot) {
+        if (allRequestsSnapshot.connectionState == ConnectionState.waiting) {
           return const LinearProgressIndicator();
         }
 
-        if (snapshot.hasError) {
+        if (allRequestsSnapshot.hasError) {
           return const Text(
-            'Unable to check membership status.',
+            'Unable to check membership attempts.',
             style: TextStyle(color: Colors.red),
           );
         }
 
-        final request = snapshot.data?.data();
-        final status = request?['status'];
-        final attemptCount = (request?['attemptCount'] as num?)?.toInt() ?? 0;
+        final totalRequests =
+            allRequestsSnapshot.data?.docs.where((doc) {
+              final status = doc.data()['status'];
 
-        if (status == 'pending') {
-          return const Text(
-            'Membership request pending',
-            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-          );
-        }
+              return status == 'pending' || status == 'rejected';
+            }).length ??
+            0;
 
-        if (status == 'approved') {
-          return const Text(
-            'You are a member of this club.',
-            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-          );
-        }
+        final hasApprovedOtherClub =
+            allRequestsSnapshot.data?.docs.any((doc) {
+              final data = doc.data();
 
-        if (status == 'already_member') {
-          return const Text(
-            'Already a member of another club.',
-            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-          );
-        }
+              return data['status'] == 'approved' && data['clubId'] != clubId;
+            }) ??
+            false;
 
-        if (status == 'removed') {
-          return const Text(
-            'You were removed from this club.',
-            style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold),
-          );
-        }
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: requestRef.snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const LinearProgressIndicator();
+            }
 
-        if (status == 'rejected' && attemptCount >= 3) {
-          return const Text(
-            'Maximum request attempts reached.',
-            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-          );
-        }
+            if (snapshot.hasError) {
+              return const Text(
+                'Unable to check membership status.',
+                style: TextStyle(color: Colors.red),
+              );
+            }
 
-        return SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () async {
-              try {
-                final membershipSnapshot = await membershipRef.get();
+            final request = snapshot.data?.data();
+            final status = request?['status'];
+            final attemptCount =
+                (request?['attemptCount'] as num?)?.toInt() ?? 0;
 
-                int initialPendingCount = 0;
-                String? initialApprovedClubId;
+            if (hasApprovedOtherClub) {
+              return const Text(
+                'Already a member of another club.',
+                style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              );
+            }
 
-                if (!membershipSnapshot.exists) {
-                  final existingRequests = await firestore
-                      .collection('club_membership_requests')
-                      .where('studentId', isEqualTo: userId)
-                      .get();
-
-                  for (final doc in existingRequests.docs) {
-                    final data = doc.data();
-
-                    if (data['status'] == 'pending') {
-                      initialPendingCount++;
-                    }
-
-                    if (data['status'] == 'approved') {
-                      initialApprovedClubId = data['clubId'];
-                    }
-                  }
-                }
-
-                await firestore.runTransaction((transaction) async {
-                  final membershipDoc = await transaction.get(membershipRef);
-                  final requestDoc = await transaction.get(requestRef);
-
-                  final membershipData = membershipDoc.data();
-
-                  int pendingCount = initialPendingCount;
-                  String? approvedClubId = initialApprovedClubId;
-
-                  if (membershipDoc.exists) {
-                    pendingCount =
-                        (membershipData?['pendingCount'] as num?)?.toInt() ?? 0;
-                    approvedClubId =
-                        membershipData?['approvedClubId'] as String?;
-                  }
-
-                  if (approvedClubId != null && approvedClubId.isNotEmpty) {
-                    throw Exception(
-                      'You are already a member of another club.',
-                    );
-                  }
-
-                  if (pendingCount >= 3) {
-                    throw Exception(
-                      'You can only have 3 pending requests at a time.',
-                    );
-                  }
-
-                  final existingData = requestDoc.data();
-                  final existingStatus = existingData?['status'];
-
-                  int currentAttempts =
-                      (existingData?['attemptCount'] as num?)?.toInt() ?? 0;
-
-                  if (requestDoc.exists &&
-                      existingStatus != 'rejected' &&
-                      existingStatus != 'available') {
-                    throw Exception(
-                      'This membership request cannot be submitted again.',
-                    );
-                  }
-
-                  if (requestDoc.exists &&
-                      existingStatus == 'rejected' &&
-                      currentAttempts == 0) {
-                    currentAttempts = 1;
-                  }
-
-                  if (!requestDoc.exists || existingStatus == 'rejected') {
-                    if (currentAttempts >= 3) {
-                      throw Exception(
-                        'You have reached the maximum of 3 attempts.',
-                      );
-                    }
-                    currentAttempts++;
-                  }
-
-                  transaction.set(membershipRef, {
-                    'pendingCount': pendingCount + 1,
-                    'approvedClubId': null,
-                    'updatedAt': FieldValue.serverTimestamp(),
-                  }, SetOptions(merge: true));
-
-                  transaction.set(requestRef, {
-                    'clubId': clubId,
-                    'studentId': userId,
-                    'status': 'pending',
-                    'attemptCount': currentAttempts,
-                    'createdAt': FieldValue.serverTimestamp(),
-                  });
-                });
-
-                if (!context.mounted) return;
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Membership request submitted!'),
-                    backgroundColor: Colors.green,
+            if (status == 'pending') {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Membership request pending',
+                    style: TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                );
-              } catch (error) {
-                if (!context.mounted) return;
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (dialogContext) {
+                          return AlertDialog(
+                            title: const Text('Cancel Membership Request?'),
+                            content: const Text(
+                              'Are you sure you want to cancel your '
+                              'pending request for this club?',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, false),
+                                child: const Text('Keep Request'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialogContext, true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: const Text('Yes, Cancel'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
 
-                final message = error.toString().replaceFirst(
-                  'Exception: ',
-                  '',
-                );
+                      if (confirm != true) return;
 
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text(message)));
-              }
-            },
-            icon: const Icon(Icons.person_add),
-            label: const Text('Request to Join'),
-          ),
+                      try {
+                        await firestore.runTransaction((transaction) async {
+                          final requestDoc = await transaction.get(requestRef);
+                          final membershipDoc = await transaction.get(
+                            membershipRef,
+                          );
+
+                          if (!requestDoc.exists ||
+                              requestDoc.data()?['status'] != 'pending') {
+                            throw Exception(
+                              'This request is no longer pending.',
+                            );
+                          }
+
+                          final membershipData = membershipDoc.data();
+                          final pendingCount =
+                              (membershipData?['pendingCount'] as num?)
+                                  ?.toInt() ??
+                              0;
+
+                          if (!membershipDoc.exists ||
+                              pendingCount < 1 ||
+                              membershipData?['approvedClubId'] != null) {
+                            throw Exception(
+                              'Unable to update your pending request count.',
+                            );
+                          }
+
+                          transaction.update(requestRef, {
+                            'status': 'available',
+                          });
+
+                          transaction.update(membershipRef, {
+                            'pendingCount': pendingCount - 1,
+                            'updatedAt': FieldValue.serverTimestamp(),
+                          });
+                        });
+
+                        if (!context.mounted) return;
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Membership request cancelled.'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (error) {
+                        if (!context.mounted) return;
+
+                        final message = error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        );
+
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(message)));
+                      }
+                    },
+                    icon: const Icon(Icons.cancel_outlined),
+                    label: const Text('Cancel Request'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            if (status == 'approved') {
+              return const Text(
+                'You are a member of this club.',
+                style: TextStyle(
+                  color: Colors.green,
+                  fontWeight: FontWeight.bold,
+                ),
+              );
+            }
+
+            if (status == 'already_member') {
+              return const Text(
+                'Already a member of another club.',
+                style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              );
+            }
+
+            if (status == 'removed') {
+              return const Text(
+                'You were removed from this club.',
+                style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              );
+            }
+
+            if (totalRequests >= 3 || attemptCount >= 3) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Maximum request attempts reached.',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        final membershipSnapshot = await membershipRef.get();
+
+                        int initialPendingCount = 0;
+                        String? initialApprovedClubId;
+
+                        if (!membershipSnapshot.exists) {
+                          final existingRequests = await firestore
+                              .collection('club_membership_requests')
+                              .where('studentId', isEqualTo: userId)
+                              .get();
+
+                          for (final doc in existingRequests.docs) {
+                            final data = doc.data();
+
+                            if (data['status'] == 'pending') {
+                              initialPendingCount++;
+                            }
+
+                            if (data['status'] == 'approved') {
+                              initialApprovedClubId = data['clubId'];
+                            }
+                          }
+                        }
+
+                        await firestore.runTransaction((transaction) async {
+                          final membershipDoc = await transaction.get(
+                            membershipRef,
+                          );
+                          final requestDoc = await transaction.get(requestRef);
+
+                          final membershipData = membershipDoc.data();
+
+                          int pendingCount = initialPendingCount;
+                          String? approvedClubId = initialApprovedClubId;
+
+                          if (membershipDoc.exists) {
+                            pendingCount =
+                                (membershipData?['pendingCount'] as num?)
+                                    ?.toInt() ??
+                                0;
+                            approvedClubId =
+                                membershipData?['approvedClubId'] as String?;
+                          }
+
+                          if (approvedClubId != null &&
+                              approvedClubId.isNotEmpty) {
+                            throw Exception(
+                              'You are already a member of another club.',
+                            );
+                          }
+
+                          if (pendingCount >= 3) {
+                            throw Exception(
+                              'You can only have 3 pending requests at a time.',
+                            );
+                          }
+
+                          final existingData = requestDoc.data();
+                          final existingStatus = existingData?['status'];
+
+                          int currentAttempts =
+                              (existingData?['attemptCount'] as num?)
+                                  ?.toInt() ??
+                              0;
+
+                          if (requestDoc.exists &&
+                              existingStatus != 'rejected' &&
+                              existingStatus != 'available') {
+                            throw Exception(
+                              'This membership request cannot be submitted again.',
+                            );
+                          }
+
+                          if (requestDoc.exists &&
+                              existingStatus == 'rejected' &&
+                              currentAttempts == 0) {
+                            currentAttempts = 1;
+                          }
+
+                          if (!requestDoc.exists ||
+                              existingStatus == 'rejected') {
+                            if (currentAttempts >= 3) {
+                              throw Exception(
+                                'You have reached the maximum of 3 attempts.',
+                              );
+                            }
+                            currentAttempts++;
+                          }
+
+                          transaction.set(membershipRef, {
+                            'pendingCount': pendingCount + 1,
+                            'approvedClubId': null,
+                            'updatedAt': FieldValue.serverTimestamp(),
+                          }, SetOptions(merge: true));
+
+                          transaction.set(requestRef, {
+                            'clubId': clubId,
+                            'studentId': userId,
+                            'status': 'pending',
+                            'attemptCount': currentAttempts,
+                            'createdAt': FieldValue.serverTimestamp(),
+                          });
+                        });
+
+                        if (!context.mounted) return;
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Membership request submitted!'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (error) {
+                        if (!context.mounted) return;
+
+                        final message = error.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        );
+
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(message)));
+                      }
+                    },
+                    icon: const Icon(Icons.person_add),
+                    label: const Text('Request to Join'),
+                  ),
+                ),
+              ],
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _membershipAttemptIndicator(int attempts) {
+    final remaining = (3 - attempts).clamp(0, 3);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.blue.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Membership Request Attempts',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                '$attempts / 3',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: List.generate(
+              3,
+              (index) => Expanded(
+                child: Container(
+                  height: 7,
+                  margin: const EdgeInsets.only(right: 5),
+                  decoration: BoxDecoration(
+                    color: index < attempts
+                        ? Colors.blue
+                        : Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$remaining ${remaining == 1 ? 'attempt' : 'attempts'} remaining',
+            style: TextStyle(
+              color: remaining == 0 ? Colors.red : Colors.blue,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -568,13 +963,18 @@ class ClubsPage extends StatelessWidget {
                 .doc(studentId)
                 .get();
 
+            final studentData = studentSnapshot.data();
+
             final studentName =
-                studentSnapshot.data()?['name']?.toString() ??
-                'Unknown Student';
+                studentData?['name']?.toString() ?? 'Unknown Student';
+
+            final institutionalId =
+                studentData?['institutionalId']?.toString() ?? 'Not available';
 
             return <String, dynamic>{
               'request': request,
               'studentId': studentId,
+              'institutionalId': institutionalId,
               'studentName': studentName,
               'status': request.data()['status']?.toString() ?? '',
             };
@@ -677,7 +1077,8 @@ class ClubsPage extends StatelessWidget {
 
       List<DocumentReference<Map<String, dynamic>>> relatedRefs = [];
 
-      if (isAdminUser && (status == 'approved' || status == 'removed')) {
+      if ((isAdminUser || isTeacherUser) &&
+          (status == 'approved' || status == 'removed')) {
         final relatedStatus = status == 'approved'
             ? 'pending'
             : 'already_member';
@@ -709,7 +1110,7 @@ class ClubsPage extends StatelessWidget {
           throw Exception('The membership status has changed. Please retry.');
         }
 
-        final membershipData = membershipDoc?.data();
+        final membershipData = membershipDoc.data();
 
         final approvedClubId = membershipData?['approvedClubId'] as String?;
 
@@ -1070,6 +1471,8 @@ class _MembershipSearchTableState extends State<_MembershipSearchTable> {
         const SizedBox(height: 16),
 
         // STUDENT TABLE
+
+        // STUDENT CARDS
         Text(
           'Students (${filteredStudents.length})',
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -1083,150 +1486,180 @@ class _MembershipSearchTableState extends State<_MembershipSearchTable> {
             child: Center(child: Text('No matching students found.')),
           )
         else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: WidgetStateProperty.all(Colors.blue.shade50),
-              columnSpacing: 24,
-              horizontalMargin: 12,
-              columns: const [
-                DataColumn(label: Text('Student Name')),
-                DataColumn(label: Text('Student ID')),
-                DataColumn(label: Text('Status')),
-                DataColumn(label: Text('Actions')),
-              ],
-              rows: filteredStudents.map((student) {
-                final request =
-                    student['request']
-                        as QueryDocumentSnapshot<Map<String, dynamic>>;
+          ...filteredStudents.map((student) {
+            final request =
+                student['request']
+                    as QueryDocumentSnapshot<Map<String, dynamic>>;
 
-                final studentName = student['studentName'].toString();
-                final studentId = student['studentId'].toString();
-                final status = student['status'].toString();
+            final studentName = student['studentName'].toString();
+            final institutionalId = student['institutionalId'].toString();
+            final status = student['status'].toString();
 
-                final statusColor = status == 'pending'
-                    ? Colors.orange
-                    : status == 'approved'
-                    ? Colors.green
-                    : Colors.red;
+            final statusColor = status == 'pending'
+                ? Colors.orange
+                : status == 'approved'
+                ? Colors.green
+                : Colors.red;
 
-                final statusBadge = Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    status.toUpperCase(),
-                    style: TextStyle(
-                      color: statusColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 11,
+            final statusBadge = Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                status.toUpperCase(),
+                style: TextStyle(
+                  color: statusColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                ),
+              ),
+            );
+
+            Widget actions;
+
+            if (status == 'pending') {
+              actions = Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => widget.updateMembershipStatus(
+                        widget.parentContext,
+                        request.id,
+                        'approved',
+                      ),
+                      icon: const Icon(Icons.check, size: 18),
+                      label: const Text('Approve'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ),
-                );
-
-                Widget actions;
-
-                if (status == 'pending') {
-                  actions = Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ElevatedButton(
-                        onPressed: () => widget.updateMembershipStatus(
-                          widget.parentContext,
-                          request.id,
-                          'approved',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                        ),
-                        child: const Text('Approve'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => widget.updateMembershipStatus(
+                        widget.parentContext,
+                        request.id,
+                        'rejected',
                       ),
-                      const SizedBox(width: 6),
-                      ElevatedButton(
-                        onPressed: () => widget.updateMembershipStatus(
-                          widget.parentContext,
-                          request.id,
-                          'rejected',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                        ),
-                        child: const Text('Reject'),
+                      icon: const Icon(Icons.close, size: 18),
+                      label: const Text('Reject'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
                       ),
-                    ],
-                  );
-                } else if (status == 'approved') {
-                  actions = ElevatedButton(
-                    onPressed: () async {
-                      final confirm = await showDialog<bool>(
-                        context: widget.parentContext,
-                        builder: (dialogContext) => AlertDialog(
-                          title: const Text('Remove Student'),
-                          content: const Text(
-                            'Are you sure you want to remove this student '
-                            'from the club?',
+                    ),
+                  ),
+                ],
+              );
+            } else if (status == 'approved') {
+              actions = SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: widget.parentContext,
+                      builder: (dialogContext) => AlertDialog(
+                        title: const Text('Remove Student'),
+                        content: const Text(
+                          'Are you sure you want to remove this student '
+                          'from the club?',
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, false),
+                            child: const Text('Cancel'),
                           ),
-                          actions: [
-                            TextButton(
-                              onPressed: () =>
-                                  Navigator.pop(dialogContext, false),
-                              child: const Text('Cancel'),
+                          ElevatedButton(
+                            onPressed: () => Navigator.pop(dialogContext, true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
                             ),
-                            ElevatedButton(
-                              onPressed: () =>
-                                  Navigator.pop(dialogContext, true),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: const Text('Remove'),
-                            ),
-                          ],
-                        ),
+                            child: const Text('Remove'),
+                          ),
+                        ],
+                      ),
+                    );
+
+                    if (confirm == true && widget.parentContext.mounted) {
+                      await widget.updateMembershipStatus(
+                        widget.parentContext,
+                        request.id,
+                        'removed',
                       );
+                    }
+                  },
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text('Remove Member'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              );
+            } else {
+              actions = const Text(
+                'No actions available for this request.',
+                style: TextStyle(color: Colors.grey),
+              );
+            }
 
-                      if (confirm == true) {
-                        await widget.updateMembershipStatus(
-                          widget.parentContext,
-                          request.id,
-                          'removed',
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                    ),
-                    child: const Text('Remove'),
-                  );
-                } else {
-                  actions = const Text(
-                    'No action',
-                    style: TextStyle(color: Colors.grey),
-                  );
-                }
-
-                return DataRow(
-                  cells: [
-                    DataCell(Text(studentName)),
-                    DataCell(Text(studentId)),
-                    DataCell(statusBadge),
-                    DataCell(actions),
+            return Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: ExpansionTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFEAF2FA),
+                  child: Icon(Icons.person_outline, color: Color(0xFF245A91)),
+                ),
+                title: Text(
+                  studentName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                subtitle: Text(
+                  'School ID: $institutionalId',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    statusBadge,
+                    const SizedBox(width: 6),
+                    const Icon(Icons.expand_more),
                   ],
-                );
-              }).toList(),
-            ),
-          ),
+                ),
+                childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                children: [
+                  const Divider(),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.badge_outlined),
+                    title: const Text('School ID'),
+                    subtitle: Text(institutionalId),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.info_outline),
+                    title: const Text('Membership Status'),
+                    subtitle: Text(status.toUpperCase()),
+                  ),
+                  const SizedBox(height: 8),
+                  actions,
+                ],
+              ),
+            );
+          }),
       ],
     );
   }
@@ -1692,11 +2125,25 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
   final titleController = TextEditingController();
   final descriptionController = TextEditingController();
 
+  static const int operatingStartMinutes = 8 * 60; // 8:00 AM
+  static const int operatingEndMinutes = 21 * 60; // 9:00 PM
+
   DateTime? selectedDate;
+  DateTime focusedDay = DateTime.now();
+
   TimeOfDay? startTime;
   TimeOfDay? endTime;
+
   String? selectedRoom;
   bool isSaving = false;
+
+  Set<DateTime> unavailableDates = {};
+  Set<DateTime> tentativeDates = {};
+  List<Map<String, dynamic>> selectedDateBookings = [];
+  List<Map<String, dynamic>> selectedDatePendingBookings = [];
+  List<Map<String, int>> availableTimeRanges = [];
+
+  bool isLoadingDateAvailability = false;
 
   final List<String> rooms = [
     'Classroom 101',
@@ -1716,36 +2163,508 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
     return time.hour * 60 + time.minute;
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: selectedDate ?? DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
+  String _formatMinutes(int minutes) {
+    final hour = minutes ~/ 60;
+    final minute = minutes % 60;
 
-    if (picked != null) {
-      setState(() => selectedDate = picked);
+    final time = TimeOfDay(hour: hour, minute: minute);
+    return time.format(context);
+  }
+
+  void _calculateAvailableTimeRanges() {
+    final bookings = [...selectedDateBookings];
+
+    bookings.sort((a, b) => (a['start'] as int).compareTo(b['start'] as int));
+
+    availableTimeRanges.clear();
+
+    int currentStart = operatingStartMinutes;
+
+    for (final booking in bookings) {
+      final start = booking['start'] as int;
+      final end = booking['end'] as int;
+
+      if (start > currentStart) {
+        availableTimeRanges.add({'start': currentStart, 'end': start});
+      }
+
+      if (end > currentStart) {
+        currentStart = end;
+      }
+    }
+
+    if (currentStart < operatingEndMinutes) {
+      availableTimeRanges.add({
+        'start': currentStart,
+        'end': operatingEndMinutes,
+      });
+    }
+
+    availableTimeRanges.removeWhere(
+      (range) => range['end']! <= range['start']!,
+    );
+  }
+
+  DateTime _dateOnly(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  bool _hasTimeOverlap(
+    int existingStart,
+    int existingEnd,
+    int selectedStart,
+    int selectedEnd,
+  ) {
+    return existingStart < selectedEnd && existingEnd > selectedStart;
+  }
+
+  Future<void> loadMonthlyAvailability(DateTime month) async {
+    if (selectedRoom == null) return;
+
+    final firestore = FirebaseFirestore.instance;
+
+    final firstDay = DateTime(month.year, month.month, 1);
+    final nextMonth = DateTime(month.year, month.month + 1, 1);
+
+    final confirmed = <DateTime>{};
+    final tentative = <DateTime>{};
+
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+
+    try {
+      // 1. Load Campus Events for this month.
+      final eventsSnapshot = await firestore
+          .collection('events')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(firstDay))
+          .where('date', isLessThan: Timestamp.fromDate(nextMonth))
+          .get();
+
+      for (final doc in eventsSnapshot.docs) {
+        final data = doc.data();
+
+        // Campus Events use "location", not "roomName".
+        if (data['location']?.toString() != selectedRoom) continue;
+
+        final status = data['status']?.toString().toLowerCase();
+
+        if (status == 'approved') {
+          final dateValue = data['date'];
+
+          if (dateValue is Timestamp) {
+            confirmed.add(_dateOnly(dateValue.toDate()));
+          }
+        } else if (status == 'pending') {
+          final dateValue = data['date'];
+
+          if (dateValue is Timestamp) {
+            tentative.add(_dateOnly(dateValue.toDate()));
+          }
+        }
+      }
+
+      // 2. Load Club Activities for this month.
+      final activitiesSnapshot = await firestore
+          .collection('club_activities')
+          .where('status', whereIn: ['approved', 'pending'])
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(firstDay))
+          .where('date', isLessThan: Timestamp.fromDate(nextMonth))
+          .get();
+
+      for (final doc in activitiesSnapshot.docs) {
+        final data = doc.data();
+
+        if (data['roomName']?.toString() != selectedRoom) continue;
+
+        final dateValue = data['date'];
+        if (dateValue is! Timestamp) continue;
+
+        final date = _dateOnly(dateValue.toDate());
+        final status = data['status']?.toString().toLowerCase();
+
+        if (status == 'approved') {
+          confirmed.add(date);
+        } else if (status == 'pending') {
+          tentative.add(date);
+        }
+      }
+
+      // 3. Load active class schedules for this room.
+      final classesSnapshot = await firestore
+          .collection('classes')
+          .where('status', isEqualTo: 'active')
+          .get();
+      debugPrint('========== CALENDAR AVAILABILITY DEBUG ==========');
+      debugPrint('Selected room: $selectedRoom');
+      debugPrint('Active classes found: ${classesSnapshot.docs.length}');
+
+      final occupiedWeekdays = <String>{};
+
+      for (final classDoc in classesSnapshot.docs) {
+        final classData = classDoc.data();
+        final schedules = classData['schedules'];
+        debugPrint('Class: ${classData['subjectName']}');
+        debugPrint('Schedules: $schedules');
+
+        if (schedules is! List) continue;
+
+        for (final schedule in schedules) {
+          if (schedule is! Map) continue;
+
+          if (schedule['roomName']?.toString() != selectedRoom) {
+            continue;
+          }
+
+          final day = schedule['dayOfWeek']?.toString();
+
+          if (weekdays.contains(day)) {
+            occupiedWeekdays.add(day!);
+          }
+        }
+      }
+      debugPrint('Occupied weekdays: $occupiedWeekdays');
+      debugPrint('=================================================');
+
+      // Mark every matching weekday in this month.
+      for (
+        DateTime date = firstDay;
+        date.isBefore(nextMonth);
+        date = date.add(const Duration(days: 1))
+      ) {
+        final day = weekdays[date.weekday - 1];
+
+        if (occupiedWeekdays.contains(day)) {
+          confirmed.add(_dateOnly(date));
+        }
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        unavailableDates = confirmed;
+        tentativeDates = tentative.difference(confirmed);
+      });
+    } catch (error) {
+      debugPrint('Failed to load room availability: $error');
     }
   }
 
-  Future<void> _pickTime(bool isStart) async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: isStart
-          ? (startTime ?? TimeOfDay.now())
-          : (endTime ?? TimeOfDay.now()),
+  Future<void> loadSelectedDateAvailability() async {
+    if (selectedRoom == null || selectedDate == null) return;
+
+    setState(() {
+      isLoadingDateAvailability = true;
+      selectedDateBookings.clear();
+      selectedDatePendingBookings.clear();
+      availableTimeRanges.clear();
+    });
+
+    final firestore = FirebaseFirestore.instance;
+
+    final dateStart = DateTime(
+      selectedDate!.year,
+      selectedDate!.month,
+      selectedDate!.day,
     );
 
-    if (picked != null) {
-      setState(() {
-        if (isStart) {
-          startTime = picked;
-        } else {
-          endTime = picked;
-        }
-      });
+    final nextDate = dateStart.add(const Duration(days: 1));
+
+    final bookings = <Map<String, dynamic>>[];
+    final pendingBookings = <Map<String, dynamic>>[];
+
+    void addBooking(Map<String, dynamic> data, String title, String status) {
+      final start = data['startTimeMinutes'];
+      final end = data['endTimeMinutes'];
+
+      if (start is! num || end is! num) return;
+
+      final startMinutes = start.toInt();
+      final endMinutes = end.toInt();
+
+      if (endMinutes <= operatingStartMinutes ||
+          startMinutes >= operatingEndMinutes ||
+          endMinutes <= startMinutes) {
+        return;
+      }
+
+      final booking = <String, dynamic>{
+        'start': startMinutes.clamp(operatingStartMinutes, operatingEndMinutes),
+        'end': endMinutes.clamp(operatingStartMinutes, operatingEndMinutes),
+        'title': title,
+        'status': status,
+      };
+
+      if (status == 'approved') {
+        bookings.add(booking);
+      } else if (status == 'pending') {
+        pendingBookings.add(booking);
+      }
     }
+
+    try {
+      // 1. Campus Events
+      final eventsSnapshot = await firestore
+          .collection('events')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('date', isLessThan: Timestamp.fromDate(nextDate))
+          .get();
+
+      for (final doc in eventsSnapshot.docs) {
+        final data = doc.data();
+
+        if (data['location']?.toString() != selectedRoom) continue;
+
+        final status = data['status']?.toString().toLowerCase();
+
+        addBooking(
+          data,
+          data['title']?.toString() ?? 'Campus Event',
+          status ?? '',
+        );
+      }
+
+      // 2. Club Activities
+      final activitiesSnapshot = await firestore
+          .collection('club_activities')
+          .where('status', whereIn: ['approved', 'pending'])
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('date', isLessThan: Timestamp.fromDate(nextDate))
+          .get();
+
+      for (final doc in activitiesSnapshot.docs) {
+        final data = doc.data();
+
+        if (data['roomName']?.toString() != selectedRoom) continue;
+
+        addBooking(
+          data,
+          data['activityTitle']?.toString() ?? 'Club Activity',
+          data['status']?.toString().toLowerCase() ?? '',
+        );
+      }
+
+      // 3. Active class schedules
+      final classesSnapshot = await firestore
+          .collection('classes')
+          .where('status', isEqualTo: 'active')
+          .get();
+
+      const weekdays = [
+        'Monday',
+        'Tuesday',
+        'Wednesday',
+        'Thursday',
+        'Friday',
+        'Saturday',
+        'Sunday',
+      ];
+
+      final selectedDay = weekdays[selectedDate!.weekday - 1];
+
+      for (final classDoc in classesSnapshot.docs) {
+        final classData = classDoc.data();
+        final schedules = classData['schedules'];
+
+        if (schedules is! List) continue;
+
+        for (final schedule in schedules) {
+          if (schedule is! Map) continue;
+
+          if (schedule['roomName']?.toString() != selectedRoom) continue;
+          if (schedule['dayOfWeek']?.toString() != selectedDay) continue;
+
+          final start = schedule['startTimeMinutes'];
+          final end = schedule['endTimeMinutes'];
+
+          if (start is! num || end is! num) continue;
+
+          addBooking(
+            {'startTimeMinutes': start, 'endTimeMinutes': end},
+            classData['subjectName']?.toString() ?? 'Class Schedule',
+            'approved',
+          );
+        }
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        selectedDateBookings = bookings;
+        selectedDatePendingBookings = pendingBookings;
+        _calculateAvailableTimeRanges();
+        isLoadingDateAvailability = false;
+      });
+    } catch (error) {
+      debugPrint('Failed to load selected date availability: $error');
+
+      if (!mounted) return;
+
+      setState(() {
+        isLoadingDateAvailability = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to load availability: $error')),
+      );
+    }
+  }
+
+  Future<void> _pickDate() async {
+    if (selectedRoom == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a room first.')),
+      );
+      return;
+    }
+
+    DateTime dialogFocusedDay = focusedDay;
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, dialogSetState) {
+            return AlertDialog(
+              title: const Text('Room Availability'),
+              content: SizedBox(
+                width: 350,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Availability for $selectedRoom',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 12),
+
+                    TableCalendar<String>(
+                      firstDay: DateTime.now(),
+                      lastDay: DateTime.now().add(const Duration(days: 365)),
+                      focusedDay: dialogFocusedDay,
+                      calendarFormat: CalendarFormat.month,
+                      availableCalendarFormats: const {
+                        CalendarFormat.month: 'Month',
+                      },
+                      selectedDayPredicate: (day) {
+                        return selectedDate != null &&
+                            isSameDay(selectedDate, day);
+                      },
+                      eventLoader: (day) {
+                        final date = _dateOnly(day);
+
+                        if (unavailableDates.contains(date)) {
+                          return ['confirmed'];
+                        }
+
+                        if (tentativeDates.contains(date)) {
+                          return ['pending'];
+                        }
+
+                        return [];
+                      },
+                      onDaySelected: (selectedDay, focusedDayValue) {
+                        setState(() {
+                          selectedDate = _dateOnly(selectedDay);
+                          focusedDay = focusedDayValue;
+
+                          startTime = null;
+                          endTime = null;
+                        });
+
+                        Navigator.pop(dialogContext);
+
+                        loadSelectedDateAvailability();
+                      },
+                      onPageChanged: (newFocusedDay) async {
+                        dialogSetState(() {
+                          dialogFocusedDay = newFocusedDay;
+                        });
+
+                        focusedDay = newFocusedDay;
+
+                        await loadMonthlyAvailability(newFocusedDay);
+
+                        dialogSetState(() {});
+                      },
+                      calendarBuilders: CalendarBuilders<String>(
+                        markerBuilder: (context, day, events) {
+                          if (events.isEmpty) return null;
+
+                          final isConfirmed = events.contains('confirmed');
+
+                          return Positioned(
+                            bottom: 5,
+                            child: Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: isConfirmed ? Colors.red : Colors.orange,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        const Text('Booked'),
+                        const SizedBox(width: 16),
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: Colors.orange,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        const Text('Pending'),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    const Text(
+                      'Marked dates may still have available time slots. '
+                      'Choose a date to continue.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _submitActivity() async {
@@ -1766,10 +2685,14 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
     final start = _toMinutes(startTime!);
     final end = _toMinutes(endTime!);
 
-    if (end <= start) {
+    if (start < operatingStartMinutes ||
+        end > operatingEndMinutes ||
+        end <= start) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('End time must be later than start time.'),
+          content: Text(
+            'Please select a valid time between 8:00 AM and 9:00 PM.',
+          ),
         ),
       );
       return;
@@ -1778,11 +2701,18 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
     setState(() => isSaving = true);
 
     try {
-      final firestore = FirebaseFirestore.instance;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Please log in first.');
 
-      final activityDate = Timestamp.fromDate(
-        DateTime(selectedDate!.year, selectedDate!.month, selectedDate!.day),
-      );
+      final firestore = FirebaseFirestore.instance;
+      final dateStart = _dateOnly(selectedDate!);
+      final dateEnd = dateStart.add(const Duration(days: 1));
+
+      // Check active classroom schedules.
+      final classesSnapshot = await firestore
+          .collection('classes')
+          .where('status', isEqualTo: 'active')
+          .get();
 
       const weekdays = [
         'Monday',
@@ -1796,12 +2726,6 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
 
       final selectedDay = weekdays[selectedDate!.weekday - 1];
 
-      // Check active classroom schedules.
-      final classesSnapshot = await firestore
-          .collection('classes')
-          .where('status', isEqualTo: 'active')
-          .get();
-
       for (final classDoc in classesSnapshot.docs) {
         final classData = classDoc.data();
         final schedules = classData['schedules'];
@@ -1810,16 +2734,15 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
 
         for (final schedule in schedules) {
           if (schedule is! Map) continue;
-
-          if (schedule['dayOfWeek']?.toString() != selectedDay) continue;
           if (schedule['roomName']?.toString() != selectedRoom) continue;
+          if (schedule['dayOfWeek']?.toString() != selectedDay) continue;
 
           final oldStart = schedule['startTimeMinutes'];
           final oldEnd = schedule['endTimeMinutes'];
 
           if (oldStart is! num || oldEnd is! num) continue;
 
-          if (oldStart.toInt() < end && oldEnd.toInt() > start) {
+          if (_hasTimeOverlap(oldStart.toInt(), oldEnd.toInt(), start, end)) {
             throw Exception(
               '$selectedRoom is already assigned to '
               '${classData['subjectName'] ?? 'a class'} on $selectedDay.',
@@ -1828,82 +2751,385 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
         }
       }
 
-      // Check Campus Events on the selected date.
-      final assignmentsSnapshot = await firestore
-          .collection('room_assignments')
-          .where('date', isEqualTo: activityDate)
+      // Check approved Campus Events.
+      final eventsSnapshot = await firestore
+          .collection('events')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('date', isLessThan: Timestamp.fromDate(dateEnd))
           .get();
 
-      for (final assignment in assignmentsSnapshot.docs) {
-        final data = assignment.data();
+      for (final event in eventsSnapshot.docs) {
+        final data = event.data();
 
-        if (data['roomName']?.toString() != selectedRoom) continue;
+        if (data['location']?.toString() != selectedRoom) continue;
+        if (data['status']?.toString().toLowerCase() != 'approved') {
+          continue;
+        }
 
         final oldStart = data['startTimeMinutes'];
         final oldEnd = data['endTimeMinutes'];
 
         if (oldStart is! num || oldEnd is! num) continue;
 
-        if (oldStart.toInt() < end && oldEnd.toInt() > start) {
-          throw Exception('$selectedRoom is already booked by a Campus Event.');
+        if (_hasTimeOverlap(oldStart.toInt(), oldEnd.toInt(), start, end)) {
+          throw Exception(
+            '$selectedRoom is already booked by an approved Campus Event.',
+          );
         }
       }
 
-      // Check other approved Club Activities on the selected date.
+      // Check approved Club Activities.
       final activitiesSnapshot = await firestore
           .collection('club_activities')
           .where('status', isEqualTo: 'approved')
-          .where('date', isEqualTo: activityDate)
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(dateStart))
+          .where('date', isLessThan: Timestamp.fromDate(dateEnd))
           .get();
 
       for (final activity in activitiesSnapshot.docs) {
         final data = activity.data();
 
         if (data['roomName']?.toString() != selectedRoom) continue;
+        if (data['status']?.toString().toLowerCase() != 'approved') {
+          continue;
+        }
 
         final oldStart = data['startTimeMinutes'];
         final oldEnd = data['endTimeMinutes'];
 
         if (oldStart is! num || oldEnd is! num) continue;
 
-        if (oldStart.toInt() < end && oldEnd.toInt() > start) {
+        if (_hasTimeOverlap(oldStart.toInt(), oldEnd.toInt(), start, end)) {
           throw Exception(
             '$selectedRoom is already booked by another Club Activity.',
           );
         }
       }
 
-      await firestore.collection('club_activities').add({
-        'clubId': widget.clubId,
-        'clubName': widget.clubName,
+      // Save the new activity request as pending.
+      final userDoc = await firestore.collection('users').doc(user.uid).get();
+
+      final clubDoc = await firestore
+          .collection('clubs')
+          .doc(widget.clubId)
+          .get();
+
+      debugPrint('--- CLUB ACTIVITY PERMISSION CHECK ---');
+      debugPrint('User role: ${userDoc.data()?['role']}');
+      debugPrint('Club exists: ${clubDoc.exists}');
+      debugPrint('Club status: ${clubDoc.data()?['status']}');
+      debugPrint(
+        'Club advisor matches user: ${clubDoc.data()?['advisorId'] == user.uid}',
+      );
+      debugPrint(
+        'Widget advisor matches user: ${widget.advisorId == user.uid}',
+      );
+      debugPrint('--------------------------------------');
+      final activityData = {
         'activityTitle': titleController.text.trim(),
         'description': descriptionController.text.trim(),
+        'clubId': widget.clubId,
+        'clubName': widget.clubName,
         'advisorId': widget.advisorId,
         'roomName': selectedRoom,
-        'date': activityDate,
+        'date': Timestamp.fromDate(dateStart),
         'startTimeMinutes': start,
         'endTimeMinutes': end,
         'status': 'pending',
+        'createdBy': user.uid,
         'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      debugPrint('ACTIVITY DATA: $activityData');
+
+      debugPrint(
+        'FIRESTORE PROJECT: ${FirebaseFirestore.instance.app.options.projectId}',
+      );
+      debugPrint(
+        'FIRESTORE DATABASE: ${FirebaseFirestore.instance.databaseId}',
+      );
+      debugPrint('AUTH UID: ${FirebaseAuth.instance.currentUser?.uid}');
+
+      final clubCheck = await firestore
+          .collection('clubs')
+          .doc(widget.clubId)
+          .get();
+
+      debugPrint('CLUB DOCUMENT ID: ${clubCheck.id}');
+      debugPrint('CLUB DOCUMENT DATA: ${clubCheck.data()}');
+
+      await firestore.collection('club_activities').add(activityData);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Club activity request submitted successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      Navigator.pop(context);
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to submit activity: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => isSaving = false);
+      }
+    }
+  }
+
+  Future<void> _pickTime(bool isStart) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: isStart
+          ? (startTime ?? TimeOfDay.now())
+          : (endTime ?? TimeOfDay.now()),
+    );
+
+    if (!mounted) return;
+
+    if (picked != null) {
+      final pickedMinutes = _toMinutes(picked);
+
+      if (pickedMinutes < operatingStartMinutes ||
+          pickedMinutes > operatingEndMinutes) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please choose a time between 8:00 AM and 9:00 PM.'),
+          ),
+        );
+        return;
+      }
+
+      setState(() {
+        if (isStart) {
+          startTime = picked;
+        } else {
+          endTime = picked;
+        }
+      });
+    }
+  }
+
+  Future<void> updateActivityStatus(String activityId, String status) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          status == 'approved' ? 'Approve Activity?' : 'Reject Activity?',
+        ),
+        content: Text(
+          status == 'approved'
+              ? 'Are you sure you want to approve this club activity?'
+              : 'Are you sure you want to reject this club activity?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: status == 'approved' ? Colors.green : Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(status == 'approved' ? 'Approve' : 'Reject'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        throw Exception('Please log in first.');
+      }
+
+      final firestore = FirebaseFirestore.instance;
+
+      // Validate room availability before approving.
+      if (status == 'approved') {
+        final activityDoc = await firestore
+            .collection('club_activities')
+            .doc(activityId)
+            .get();
+
+        if (!activityDoc.exists) {
+          throw Exception('Club activity not found.');
+        }
+
+        final data = activityDoc.data()!;
+        final roomName = data['roomName']?.toString();
+        final dateValue = data['date'];
+        final start = data['startTimeMinutes'];
+        final end = data['endTimeMinutes'];
+
+        if (roomName == null ||
+            dateValue is! Timestamp ||
+            start is! num ||
+            end is! num) {
+          throw Exception('Activity has incomplete room or schedule details.');
+        }
+
+        final activityDate = dateValue.toDate();
+
+        final activityDay = [
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+          'Sunday',
+        ][activityDate.weekday - 1];
+
+        // Check active classroom schedules.
+        final classesSnapshot = await firestore
+            .collection('classes')
+            .where('status', isEqualTo: 'active')
+            .get();
+
+        for (final classDoc in classesSnapshot.docs) {
+          final classData = classDoc.data();
+          final schedules = classData['schedules'];
+
+          if (schedules is! List) continue;
+
+          for (final schedule in schedules) {
+            if (schedule is! Map) continue;
+
+            if (schedule['dayOfWeek']?.toString() != activityDay) continue;
+            if (schedule['roomName']?.toString() != roomName) continue;
+
+            final oldStart = schedule['startTimeMinutes'];
+            final oldEnd = schedule['endTimeMinutes'];
+
+            if (oldStart is! num || oldEnd is! num) continue;
+
+            if (oldStart.toInt() < end.toInt() &&
+                oldEnd.toInt() > start.toInt()) {
+              throw Exception(
+                '$roomName is already assigned to '
+                '${classData['subjectName'] ?? 'a class'} on $activityDay.',
+              );
+            }
+          }
+        }
+
+        // Get the selected activity's date range.
+        final eventDateStart = DateTime(
+          activityDate.year,
+          activityDate.month,
+          activityDate.day,
+        );
+
+        final eventDateEnd = eventDateStart.add(const Duration(days: 1));
+
+        // Check approved Campus Events.
+        final eventsSnapshot = await firestore
+            .collection('events')
+            .where(
+              'date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(eventDateStart),
+            )
+            .where('date', isLessThan: Timestamp.fromDate(eventDateEnd))
+            .get();
+
+        for (final event in eventsSnapshot.docs) {
+          final eventData = event.data();
+
+          if (eventData['location']?.toString() != roomName) continue;
+
+          if (eventData['status']?.toString().toLowerCase() != 'approved') {
+            continue;
+          }
+
+          final oldStart = eventData['startTimeMinutes'];
+          final oldEnd = eventData['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          if (oldStart.toInt() < end.toInt() &&
+              oldEnd.toInt() > start.toInt()) {
+            throw Exception(
+              '$roomName is already booked by an approved Campus Event.',
+            );
+          }
+        }
+
+        // Check other Club Activities on the same date.
+        final activitiesSnapshot = await firestore
+            .collection('club_activities')
+            .where(
+              'date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(eventDateStart),
+            )
+            .where('date', isLessThan: Timestamp.fromDate(eventDateEnd))
+            .get();
+
+        for (final otherActivity in activitiesSnapshot.docs) {
+          if (otherActivity.id == activityId) continue;
+
+          final otherData = otherActivity.data();
+
+          if (otherData['status']?.toString().toLowerCase() != 'approved') {
+            continue;
+          }
+
+          if (otherData['roomName']?.toString() != roomName) continue;
+
+          final oldStart = otherData['startTimeMinutes'];
+          final oldEnd = otherData['endTimeMinutes'];
+
+          if (oldStart is! num || oldEnd is! num) continue;
+
+          if (oldStart.toInt() < end.toInt() &&
+              oldEnd.toInt() > start.toInt()) {
+            throw Exception(
+              '$roomName is already booked by another Club Activity.',
+            );
+          }
+        }
+      }
+
+      // Update the activity status.
+      await firestore.collection('club_activities').doc(activityId).update({
+        'status': status,
+        'reviewedBy': user.uid,
+        'reviewedAt': FieldValue.serverTimestamp(),
       });
 
       if (!mounted) return;
 
-      Navigator.pop(context);
-
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Club activity submitted for admin approval!'),
-          backgroundColor: Colors.green,
+        SnackBar(
+          content: Text(
+            status == 'approved'
+                ? 'Club activity approved!'
+                : 'Club activity rejected.',
+          ),
+          backgroundColor: status == 'approved' ? Colors.green : Colors.orange,
         ),
       );
     } catch (error) {
       if (!mounted) return;
 
-      setState(() => isSaving = false);
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to submit activity: $error')),
+        SnackBar(
+          content: Text('Failed to update activity: $error'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -1975,8 +3201,26 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
               items: rooms.map((room) {
                 return DropdownMenuItem(value: room, child: Text(room));
               }).toList(),
-              onChanged: (value) {
-                setState(() => selectedRoom = value);
+              onChanged: (value) async {
+                setState(() {
+                  selectedRoom = value;
+
+                  // Reset the previously selected date and times.
+                  selectedDate = null;
+                  startTime = null;
+                  endTime = null;
+
+                  // Clear the previous room's availability.
+                  unavailableDates.clear();
+                  tentativeDates.clear();
+                  selectedDateBookings.clear();
+                  selectedDatePendingBookings.clear();
+                  availableTimeRanges.clear();
+                });
+
+                if (value != null) {
+                  await loadMonthlyAvailability(focusedDay);
+                }
               },
               validator: (value) => value == null ? 'Select a room' : null,
             ),
@@ -1996,6 +3240,105 @@ class _ClubActivityFormDialogState extends State<ClubActivityFormDialog> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _pickDate,
             ),
+
+            if (selectedDate != null) ...[
+              const SizedBox(height: 8),
+
+              Card(
+                color: Colors.blue.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Room Availability',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      const Text(
+                        'Operating hours: 8:00 AM – 9:00 PM',
+                        style: TextStyle(fontSize: 12),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      if (isLoadingDateAvailability)
+                        const Center(child: CircularProgressIndicator())
+                      else if (availableTimeRanges.isEmpty)
+                        const Text(
+                          'No available time ranges found.',
+                          style: TextStyle(color: Colors.red),
+                        )
+                      else ...[
+                        const Text(
+                          'Available Times',
+                          style: TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+
+                        ...availableTimeRanges.map((range) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${_formatMinutes(range['start']!)} – '
+                                  '${_formatMinutes(range['end']!)}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+
+                      if (selectedDatePendingBookings.isNotEmpty) ...[
+                        const Divider(height: 20),
+                        const Text(
+                          'Pending Requests (Not Yet Confirmed)',
+                          style: TextStyle(
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+
+                        ...selectedDatePendingBookings.map((booking) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Text(
+                              '${booking['title']}: '
+                              '${_formatMinutes(booking['start'] as int)} – '
+                              '${_formatMinutes(booking['end'] as int)}',
+                              style: const TextStyle(
+                                color: Colors.orange,
+                                fontSize: 12,
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
 
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -2054,6 +3397,15 @@ class ClubActivityApprovalPage extends StatefulWidget {
 class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
   String selectedFilter = 'pending';
 
+  final TextEditingController rejectionReasonController =
+      TextEditingController();
+
+  @override
+  void dispose() {
+    rejectionReasonController.dispose();
+    super.dispose();
+  }
+
   String formatTime(int minutes) {
     final time = TimeOfDay(hour: minutes ~/ 60, minute: minutes % 60);
 
@@ -2061,24 +3413,66 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
   }
 
   Future<void> updateActivityStatus(String activityId, String status) async {
-    final confirm = await showDialog<bool>(
+    final rejectionFormKey = GlobalKey<FormState>();
+
+    final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(
           status == 'approved' ? 'Approve Activity?' : 'Reject Activity?',
         ),
-        content: Text(
-          status == 'approved'
-              ? 'Are you sure you want to approve this club activity?'
-              : 'Are you sure you want to reject this club activity?',
-        ),
+        content: status == 'approved'
+            ? const Text('Are you sure you want to approve this club activity?')
+            : Form(
+                key: rejectionFormKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Please provide a justification for rejecting this '
+                      'club activity request.',
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: rejectionReasonController,
+                      maxLines: 3,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                        labelText: 'Justification Reason',
+                        hintText: 'Explain why this request is rejected...',
+                        border: OutlineInputBorder(),
+                        alignLabelWithHint: true,
+                      ),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Justification reason is required.';
+                        }
+                        return null;
+                      },
+                    ),
+                  ],
+                ),
+              ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
+            onPressed: () {
+              if (status == 'rejected' &&
+                  !(rejectionFormKey.currentState?.validate() ?? false)) {
+                return;
+              }
+
+              Navigator.pop(
+                dialogContext,
+                status == 'approved'
+                    ? 'approved'
+                    : rejectionReasonController.text.trim(),
+              );
+            },
             style: ElevatedButton.styleFrom(
               backgroundColor: status == 'approved' ? Colors.green : Colors.red,
               foregroundColor: Colors.white,
@@ -2089,7 +3483,9 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
       ),
     );
 
-    if (confirm != true) return;
+    final rejectionReason = status == 'rejected' ? result : null;
+
+    if (result == null) return;
 
     try {
       final user = FirebaseAuth.instance.currentUser;
@@ -2168,32 +3564,56 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
           }
         }
 
-        // Check Campus Events on the same date.
-        final assignmentsSnapshot = await firestore
-            .collection('room_assignments')
-            .where('date', isEqualTo: dateValue)
+        // Get the activity's date range.
+        final eventDateStart = DateTime(
+          activityDate.year,
+          activityDate.month,
+          activityDate.day,
+        );
+
+        final eventDateEnd = eventDateStart.add(const Duration(days: 1));
+
+        // Check approved Campus Events.
+        final eventsSnapshot = await firestore
+            .collection('events')
+            .where(
+              'date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(eventDateStart),
+            )
+            .where('date', isLessThan: Timestamp.fromDate(eventDateEnd))
             .get();
 
-        for (final assignment in assignmentsSnapshot.docs) {
-          final assignmentData = assignment.data();
+        for (final event in eventsSnapshot.docs) {
+          final eventData = event.data();
 
-          if (assignmentData['roomName']?.toString() != roomName) continue;
+          if (eventData['location']?.toString() != roomName) continue;
 
-          final oldStart = assignmentData['startTimeMinutes'];
-          final oldEnd = assignmentData['endTimeMinutes'];
+          final status = eventData['status']?.toString().toLowerCase();
+
+          // Only approved events block the room.
+          if (status != 'approved') continue;
+
+          final oldStart = eventData['startTimeMinutes'];
+          final oldEnd = eventData['endTimeMinutes'];
 
           if (oldStart is! num || oldEnd is! num) continue;
 
           if (oldStart.toInt() < end.toInt() &&
               oldEnd.toInt() > start.toInt()) {
-            throw Exception('$roomName is already booked by a Campus Event.');
+            throw Exception(
+              '$roomName is already booked by an approved Campus Event.',
+            );
           }
         }
 
         // Check other approved Club Activities on the same date.
         final activitiesSnapshot = await firestore
             .collection('club_activities')
-            .where('date', isEqualTo: dateValue)
+            .where(
+              'date',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(eventDateStart),
+            )
+            .where('date', isLessThan: Timestamp.fromDate(eventDateEnd))
             .get();
 
         for (final otherActivity in activitiesSnapshot.docs) {
@@ -2222,6 +3642,8 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
         'status': status,
         'reviewedBy': user.uid,
         'reviewedAt': FieldValue.serverTimestamp(),
+        if (status == 'rejected') 'rejectionReason': rejectionReason!,
+        if (status == 'approved') 'rejectionReason': FieldValue.delete(),
       });
 
       if (!mounted) return;
@@ -2499,6 +3921,192 @@ class _ClubActivityApprovalPageState extends State<ClubActivityApprovalPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _filterChip(String label, String value) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: selectedFilter == value,
+      onSelected: (_) {
+        setState(() {
+          selectedFilter = value;
+        });
+      },
+    );
+  }
+}
+
+class AdvisorClubActivityRequestsPage extends StatefulWidget {
+  final String advisorId;
+  final String clubId;
+  final String clubName;
+
+  const AdvisorClubActivityRequestsPage({
+    super.key,
+    required this.advisorId,
+    required this.clubId,
+    required this.clubName,
+  });
+
+  @override
+  State<AdvisorClubActivityRequestsPage> createState() =>
+      _AdvisorClubActivityRequestsPageState();
+}
+
+class _AdvisorClubActivityRequestsPageState
+    extends State<AdvisorClubActivityRequestsPage> {
+  String selectedFilter = 'all';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('My Club Activity Requests'),
+        centerTitle: true,
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('club_activities')
+            .where('advisorId', isEqualTo: widget.advisorId)
+            .where('clubId', isEqualTo: widget.clubId)
+            .where('status', whereIn: ['pending', 'approved', 'rejected'])
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return const Center(
+              child: Text('Unable to load your activity requests.'),
+            );
+          }
+
+          final activities = snapshot.data?.docs ?? [];
+
+          final filteredActivities = activities.where((activity) {
+            final status = activity.data()['status'] ?? 'pending';
+            return selectedFilter == 'all' || status == selectedFilter;
+          }).toList();
+
+          filteredActivities.sort((a, b) {
+            final aDate = a.data()['createdAt'];
+            final bDate = b.data()['createdAt'];
+
+            final aTime = aDate is Timestamp ? aDate.millisecondsSinceEpoch : 0;
+            final bTime = bDate is Timestamp ? bDate.millisecondsSinceEpoch : 0;
+
+            return bTime.compareTo(aTime);
+          });
+
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    _filterChip('Pending', 'pending'),
+                    _filterChip('Approved', 'approved'),
+                    _filterChip('Rejected', 'rejected'),
+                    _filterChip('All', 'all'),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: filteredActivities.isEmpty
+                    ? const Center(child: Text('No activity requests found.'))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: filteredActivities.length,
+                        itemBuilder: (context, index) {
+                          final data = filteredActivities[index].data();
+                          final status = data['status'] ?? 'pending';
+                          final rejectionReason =
+                              data['rejectionReason']?.toString().trim() ?? '';
+
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    data['activityTitle'] ??
+                                        'Untitled Activity',
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Club: ${data['clubName'] ?? widget.clubName}',
+                                  ),
+                                  Text(
+                                    'Room: ${data['roomName'] ?? 'Not specified'}',
+                                  ),
+                                  Text(
+                                    'Description: ${data['description'] ?? 'No description'}',
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Status: ${status.toString().toUpperCase()}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: status == 'approved'
+                                          ? Colors.green
+                                          : status == 'rejected'
+                                          ? Colors.red
+                                          : Colors.orange,
+                                    ),
+                                  ),
+                                  if (status == 'rejected') ...[
+                                    const SizedBox(height: 10),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade50,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: Colors.red.shade200,
+                                        ),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            'Admin Justification',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.red,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 5),
+                                          Text(
+                                            rejectionReason.isEmpty
+                                                ? 'No rejection reason provided.'
+                                                : rejectionReason,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 

@@ -53,23 +53,30 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
             title: Text(
               showingArchived ? 'Archived Announcements' : 'Announcements',
             ),
+            leading: showingArchived
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: () {
+                      setState(() {
+                        showingArchived = false;
+                      });
+                    },
+                  )
+                : null,
             actions: [
-              if (isAdmin)
-                TextButton.icon(
+              if (isAdmin && !showingArchived)
+                IconButton(
+                  tooltip: 'View Archived Announcements',
+                  icon: const Icon(Icons.archive_outlined, color: Colors.white),
                   onPressed: () {
                     setState(() {
-                      showingArchived = !showingArchived;
+                      showingArchived = true;
                     });
                   },
-                  icon: Icon(
-                    showingArchived
-                        ? Icons.campaign_outlined
-                        : Icons.archive_outlined,
-                  ),
-                  label: Text(showingArchived ? 'Published' : 'Archived'),
                 ),
             ],
           ),
+
           floatingActionButton: isAdmin
               ? FloatingActionButton(
                   onPressed: () {
@@ -116,8 +123,11 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     child: ListTile(
-                      leading: const Icon(
-                        Icons.campaign_outlined,
+                      leading: Icon(
+                        showingArchived
+                            ? Icons.archive_outlined
+                            : Icons.campaign_outlined,
+                        size: 35,
                         color: Colors.blue,
                       ),
                       title: Text(
@@ -129,6 +139,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
+
                       trailing: isAdmin
                           ? Row(
                               mainAxisSize: MainAxisSize.min,
@@ -138,97 +149,241 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                     Icons.push_pin,
                                     color: Colors.orange,
                                   ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.edit,
-                                    color: Colors.blue,
-                                  ),
-                                  tooltip: 'Edit Announcement',
-                                  onPressed: () {
-                                    showDialog(
-                                      context: context,
-                                      builder: (dialogContext) =>
-                                          CreateAnnouncementDialog(
-                                            announcementId:
-                                                announcements[index].id,
-                                            existingData: data,
-                                          ),
-                                    );
-                                  },
-                                ),
 
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.archive_outlined,
-                                    color: Colors.orange,
-                                  ),
-                                  tooltip: 'Archive Announcement',
-                                  onPressed: () async {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (dialogContext) => AlertDialog(
-                                        title: const Text(
-                                          'Archive Announcement',
-                                        ),
-                                        content: const Text(
-                                          'Are you sure you want to archive this announcement?',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(
-                                              dialogContext,
-                                              false,
+                                if (!showingArchived) ...[
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.edit,
+                                      color: Colors.blue,
+                                    ),
+                                    tooltip: 'Edit Announcement',
+                                    onPressed: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (dialogContext) =>
+                                            CreateAnnouncementDialog(
+                                              announcementId:
+                                                  announcements[index].id,
+                                              existingData: data,
                                             ),
-                                            child: const Text('Cancel'),
+                                      );
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.archive_outlined,
+                                      color: Colors.orange,
+                                    ),
+                                    tooltip: 'Archive Announcement',
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (dialogContext) => AlertDialog(
+                                          title: const Text(
+                                            'Archive Announcement?',
                                           ),
-                                          ElevatedButton(
-                                            onPressed: () => Navigator.pop(
-                                              dialogContext,
-                                              true,
-                                            ),
-                                            child: const Text('Archive'),
+                                          content: const Text(
+                                            'This announcement will be moved to Archived Announcements.',
                                           ),
-                                        ],
-                                      ),
-                                    );
-
-                                    if (confirm != true) return;
-
-                                    try {
-                                      await FirebaseFirestore.instance
-                                          .collection('announcements')
-                                          .doc(announcements[index].id)
-                                          .update({
-                                            'status': 'archived',
-                                            'archivedAt':
-                                                FieldValue.serverTimestamp(),
-                                          });
-
-                                      if (!context.mounted) return;
-
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Announcement archived successfully.',
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                false,
                                               ),
+                                              child: const Text('Cancel'),
                                             ),
-                                          );
-                                    } catch (error) {
-                                      if (!context.mounted) return;
-
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            'Failed to archive announcement: $error',
-                                          ),
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                true,
+                                              ),
+                                              child: const Text('Archive'),
+                                            ),
+                                          ],
                                         ),
                                       );
-                                    }
-                                  },
-                                ),
+
+                                      if (confirm != true) return;
+
+                                      try {
+                                        await FirebaseFirestore.instance
+                                            .collection('announcements')
+                                            .doc(announcements[index].id)
+                                            .update({
+                                              'status': 'archived',
+                                              'archivedAt':
+                                                  FieldValue.serverTimestamp(),
+                                            });
+
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Announcement archived successfully.',
+                                                ),
+                                              ),
+                                            );
+                                      } catch (error) {
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'Failed to archive: $error',
+                                                ),
+                                              ),
+                                            );
+                                      }
+                                    },
+                                  ),
+                                ] else ...[
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.restore,
+                                      color: Colors.green,
+                                    ),
+                                    tooltip: 'Restore Announcement',
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (dialogContext) => AlertDialog(
+                                          title: const Text(
+                                            'Restore Announcement?',
+                                          ),
+                                          content: const Text(
+                                            'This announcement will return to Published Announcements.',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                false,
+                                              ),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                true,
+                                              ),
+                                              child: const Text('Restore'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      if (confirm != true) return;
+
+                                      try {
+                                        await FirebaseFirestore.instance
+                                            .collection('announcements')
+                                            .doc(announcements[index].id)
+                                            .update({
+                                              'status': 'published',
+                                              'archivedAt': FieldValue.delete(),
+                                            });
+
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Announcement restored successfully.',
+                                                ),
+                                              ),
+                                            );
+                                      } catch (error) {
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'Failed to restore: $error',
+                                                ),
+                                              ),
+                                            );
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.red,
+                                    ),
+                                    tooltip: 'Delete Announcement Permanently',
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (dialogContext) => AlertDialog(
+                                          title: const Text(
+                                            'Delete Announcement?',
+                                          ),
+                                          content: const Text(
+                                            'This will permanently delete this archived announcement. This action cannot be undone.',
+                                          ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                false,
+                                              ),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(
+                                                dialogContext,
+                                                true,
+                                              ),
+                                              child: const Text(
+                                                'Delete Permanently',
+                                                style: TextStyle(
+                                                  color: Colors.red,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+
+                                      if (confirm != true) return;
+
+                                      try {
+                                        await FirebaseFirestore.instance
+                                            .collection('announcements')
+                                            .doc(announcements[index].id)
+                                            .delete();
+
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Announcement deleted permanently.',
+                                                ),
+                                              ),
+                                            );
+                                      } catch (error) {
+                                        if (!context.mounted) return;
+
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  'Failed to delete: $error',
+                                                ),
+                                              ),
+                                            );
+                                      }
+                                    },
+                                  ),
+                                ],
                               ],
                             )
                           : data['pinned'] == true

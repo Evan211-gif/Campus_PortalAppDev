@@ -53,13 +53,61 @@ class ProfilePage extends StatelessWidget {
           if (snapshot.hasError ||
               !snapshot.hasData ||
               !snapshot.data!.exists) {
-            return const Center(child: Text('Unable to load your profile.'));
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.account_circle_outlined,
+                      size: 70,
+                      color: Colors.grey,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Unable to load your profile.',
+                      style: TextStyle(fontSize: 16),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          await FirebaseAuth.instance.signOut();
+
+                          if (!context.mounted) return;
+
+                          Navigator.of(
+                            context,
+                            rootNavigator: true,
+                          ).popUntil((route) => route.isFirst);
+                        },
+                        icon: const Icon(Icons.logout, color: Colors.red),
+                        label: const Text(
+                          'Logout',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
           }
 
           final data = snapshot.data!.data()!;
           final name = data['name']?.toString() ?? 'User';
           final email = data['email']?.toString() ?? user.email ?? '';
           final role = data['role']?.toString() ?? 'unknown';
+          final institutionalId = data['institutionalId']?.toString() ?? '';
+
+          final institutionalIdLabel = role == 'student'
+              ? 'School ID'
+              : role == 'teacher'
+              ? 'Teacher ID'
+              : '';
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(20),
@@ -132,7 +180,81 @@ class ProfilePage extends StatelessWidget {
                         title: const Text('Account Role'),
                         subtitle: Text(formatRole(role)),
                       ),
+
+                      if (institutionalIdLabel.isNotEmpty) ...[
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.credit_card_outlined),
+                          title: Text(institutionalIdLabel),
+                          subtitle: Text(
+                            institutionalId.isNotEmpty
+                                ? institutionalId
+                                : 'Not available',
+                          ),
+                        ),
+                      ],
                     ],
+                  ),
+                ),
+
+                const SizedBox(height: 30),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      final shouldLogout = await showDialog<bool>(
+                        context: context,
+                        builder: (dialogContext) => AlertDialog(
+                          title: const Text('Logout'),
+                          content: const Text(
+                            'Are you sure you want to log out?',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, false),
+                              child: const Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(dialogContext, true),
+                              child: const Text(
+                                'Logout',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+
+                      if (shouldLogout == true) {
+                        try {
+                          await FirebaseAuth.instance.signOut();
+                        } catch (error) {
+                          if (!context.mounted) return;
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Logout failed: $error'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.logout, color: Colors.red),
+                    label: const Text(
+                      'Logout',
+                      style: TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Colors.red),
+                    ),
                   ),
                 ),
               ],
