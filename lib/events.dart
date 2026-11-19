@@ -253,7 +253,7 @@ class EventsPage extends StatelessWidget {
                     onPressed: () {
                       showDialog(
                         context: context,
-                        builder: (context) =>
+                        builder: (dialogContext) =>
                             EventFormDialog(eventId: eventId, eventData: data),
                       );
                     },
@@ -444,8 +444,14 @@ class EventsPage extends StatelessWidget {
 class EventFormDialog extends StatefulWidget {
   final String? eventId;
   final Map<String, dynamic>? eventData;
+  final bool restoreAfterSave;
 
-  const EventFormDialog({super.key, this.eventId, this.eventData});
+  const EventFormDialog({
+    super.key,
+    this.eventId,
+    this.eventData,
+    this.restoreAfterSave = false,
+  });
 
   @override
   State<EventFormDialog> createState() => _EventFormDialogState();
@@ -1081,6 +1087,25 @@ class _EventFormDialogState extends State<EventFormDialog> {
       return;
     }
 
+    // PREVENT PREVIOUS DATES
+    final today = DateTime.now();
+    final currentDate = DateTime(today.year, today.month, today.day);
+    final eventDateOnly = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+    );
+
+    if (eventDateOnly.isBefore(currentDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You cannot schedule an event on a previous date.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final startMinutes = selectedStartTime.hour * 60 + selectedStartTime.minute;
 
     final endMinutes = selectedEndTime.hour * 60 + selectedEndTime.minute;
@@ -1094,10 +1119,6 @@ class _EventFormDialogState extends State<EventFormDialog> {
       );
       return;
     }
-
-    setState(() {
-      isSaving = true;
-    });
 
     final firestore = FirebaseFirestore.instance;
 
@@ -1304,7 +1325,13 @@ class _EventFormDialogState extends State<EventFormDialog> {
       final batch = firestore.batch();
 
       if (isEditing) {
-        batch.update(eventRef, eventData);
+        batch.update(eventRef, {
+          ...eventData,
+          if (widget.restoreAfterSave) ...{
+            'status': 'published',
+            'archivedAt': FieldValue.delete(),
+          },
+        });
       } else {
         batch.set(eventRef, {
           ...eventData,
@@ -1319,6 +1346,7 @@ class _EventFormDialogState extends State<EventFormDialog> {
         'date': dateTimestamp,
         'startTimeMinutes': startMinutes,
         'endTimeMinutes': endMinutes,
+        'status': 'approved',
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1331,7 +1359,9 @@ class _EventFormDialogState extends State<EventFormDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            isEditing
+            widget.restoreAfterSave
+                ? 'Event updated and published successfully!'
+                : isEditing
                 ? 'Event and room assignment updated successfully!'
                 : 'Event and room assignment created successfully!',
           ),
@@ -1357,7 +1387,13 @@ class _EventFormDialogState extends State<EventFormDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(isEditing ? 'Edit Event' : 'Add New Event'),
+      title: Text(
+        widget.restoreAfterSave
+            ? 'Edit and Publish Event'
+            : isEditing
+            ? 'Edit Event'
+            : 'Add New Event',
+      ),
 
       content: SingleChildScrollView(
         child: Form(
@@ -1631,7 +1667,13 @@ class _EventFormDialogState extends State<EventFormDialog> {
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : Text(isEditing ? 'Update Event' : 'Save Event'),
+              : Text(
+                  widget.restoreAfterSave
+                      ? 'Save and Publish'
+                      : isEditing
+                      ? 'Update Event'
+                      : 'Save Event',
+                ),
         ),
       ],
     );
@@ -1788,10 +1830,17 @@ class ArchivedEventsPage extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        tooltip: 'Restore Event',
+                        tooltip: 'Edit and Publish',
                         icon: const Icon(Icons.restore, color: Colors.green),
-                        onPressed: () async {
-                          await restoreEvent(context, event);
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (dialogContext) => EventFormDialog(
+                              eventId: event.id,
+                              eventData: data,
+                              restoreAfterSave: true,
+                            ),
+                          );
                         },
                       ),
                       IconButton(

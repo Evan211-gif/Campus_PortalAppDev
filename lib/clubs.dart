@@ -53,7 +53,9 @@ class ClubsPage extends StatelessWidget {
     final isAdmin = role == 'admin';
     final canCreate = isAdmin || role == 'teacher';
 
-    final clubsCollection = FirebaseFirestore.instance.collection('clubs');
+    final firestore = FirebaseFirestore.instance;
+    final clubsCollection = firestore.collection('clubs');
+
     String searchQuery = '';
 
     final Query<Map<String, dynamic>> query;
@@ -70,23 +72,9 @@ class ClubsPage extends StatelessWidget {
 
     return StatefulBuilder(
       builder: (context, setSearchState) {
-        return Scaffold(
-          appBar: AppBar(title: const Text('Campus Clubs'), centerTitle: true),
-          floatingActionButton: canCreate
-              ? FloatingActionButton(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (dialogContext) =>
-                          ClubFormDialog(isAdmin: isAdmin),
-                    );
-                  },
-                  child: const Icon(Icons.add),
-                )
-              : null,
-          body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        // Load and display clubs, optionally filtering by approved club.
+        Widget buildClubResults(String? approvedClubId) {
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: clubsStream,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -105,7 +93,16 @@ class ClubsPage extends StatelessWidget {
                 return const Center(child: Text('No clubs available yet.'));
               }
 
-              final filteredClubs = clubs.where((club) {
+              // If the student already has an approved club,
+              // show only that club.
+              final membershipFilteredClubs =
+                  role == 'student' &&
+                      approvedClubId != null &&
+                      approvedClubId.isNotEmpty
+                  ? clubs.where((club) => club.id == approvedClubId).toList()
+                  : clubs;
+
+              final filteredClubs = membershipFilteredClubs.where((club) {
                 final name = (club.data()['name'] ?? '')
                     .toString()
                     .toLowerCase();
@@ -120,6 +117,7 @@ class ClubsPage extends StatelessWidget {
                     'Explore Clubs',
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                   ),
+
                   const SizedBox(height: 16),
 
                   // SEARCH BAR
@@ -177,7 +175,56 @@ class ClubsPage extends StatelessWidget {
                 ],
               );
             },
-          ),
+          );
+        }
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('Campus Clubs'), centerTitle: true),
+
+          floatingActionButton: canCreate
+              ? FloatingActionButton(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (dialogContext) =>
+                          ClubFormDialog(isAdmin: isAdmin),
+                    );
+                  },
+                  child: const Icon(Icons.add),
+                )
+              : null,
+
+          // Students listen to their membership summary.
+          // Admins and teachers continue using the existing club list.
+          body: role == 'student'
+              ? StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: firestore
+                      .collection('student_memberships')
+                      .doc(userId)
+                      .snapshots(),
+                  builder: (context, membershipSnapshot) {
+                    if (membershipSnapshot.hasError) {
+                      return const Center(
+                        child: Text('Unable to load membership information.'),
+                      );
+                    }
+
+                    if (membershipSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final membershipData = membershipSnapshot.data?.data();
+
+                    final approvedClubId = membershipData?['approvedClubId']
+                        ?.toString();
+
+                    return buildClubResults(approvedClubId);
+                  },
+                )
+              : buildClubResults(null),
         );
       },
     );
@@ -938,26 +985,39 @@ class ClubsPage extends StatelessWidget {
 
         final allRequests = snapshot.data?.docs ?? [];
 
-        final visibleRequests = allRequests.where((request) {
-          final status = request.data()['status'];
-
-          return status == 'pending' ||
-              status == 'approved' ||
-              status == 'rejected';
-        }).toList();
-
-        if (visibleRequests.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: Text('No membership records yet.')),
-          );
-        }
-
-        // Fetch student information once for this snapshot.
+        // Fetch student information and check whether each student
+        // has already been approved in another club.
         final studentsFuture = Future.wait(
-          visibleRequests.map((request) async {
+          allRequests.map((request) async {
+            final status = request.data()['status']?.toString() ?? '';
+
+            // Only display these membership statuses.
+            if (status != 'pending' &&
+                status != 'approved' &&
+                status != 'rejected') {
+              return null;
+            }
+
             final studentId = request.data()['studentId']?.toString() ?? '';
 
+            // Check the student's approved club.
+            final membershipSnapshot = await FirebaseFirestore.instance
+                .collection('student_memberships')
+                .doc(studentId)
+                .get();
+
+            final membershipData = membershipSnapshot.data();
+
+            final approvedClubId =
+                membershipData?['approvedClubId']?.toString() ?? '';
+
+            // Hide this request if the student is already approved
+            // in a different club.
+            if (approvedClubId.isNotEmpty && approvedClubId != clubId) {
+              return null;
+            }
+
+            // Fetch student information.
             final studentSnapshot = await FirebaseFirestore.instance
                 .collection('users')
                 .doc(studentId)
@@ -976,12 +1036,12 @@ class ClubsPage extends StatelessWidget {
               'studentId': studentId,
               'institutionalId': institutionalId,
               'studentName': studentName,
-              'status': request.data()['status']?.toString() ?? '',
+              'status': status,
             };
           }),
         );
 
-        return FutureBuilder<List<Map<String, dynamic>>>(
+        return FutureBuilder<List<Map<String, dynamic>?>>(
           future: studentsFuture,
           builder: (context, studentSnapshot) {
             if (studentSnapshot.connectionState == ConnectionState.waiting) {
@@ -1000,7 +1060,16 @@ class ClubsPage extends StatelessWidget {
               );
             }
 
-            final students = studentSnapshot.data ?? [];
+            final students = (studentSnapshot.data ?? [])
+                .whereType<Map<String, dynamic>>()
+                .toList();
+
+            if (students.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: Text('No membership records yet.')),
+              );
+            }
 
             return _MembershipSearchTable(
               key: ValueKey(clubId),
@@ -1077,8 +1146,7 @@ class ClubsPage extends StatelessWidget {
 
       List<DocumentReference<Map<String, dynamic>>> relatedRefs = [];
 
-      if ((isAdminUser || isTeacherUser) &&
-          (status == 'approved' || status == 'removed')) {
+      if (isAdminUser && (status == 'approved' || status == 'removed')) {
         final relatedStatus = status == 'approved'
             ? 'pending'
             : 'already_member';
@@ -1724,87 +1792,84 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
   }
 
   Widget buildAdvisorDropdown() {
-    final advisorsQuery = FirebaseFirestore.instance
-        .collection('users')
-        .where('role', isEqualTo: 'teacher');
-
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: advisorsQuery.snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.all(12),
-            child: LinearProgressIndicator(),
-          );
+      stream: FirebaseFirestore.instance.collection('clubs').snapshots(),
+      builder: (context, clubsSnapshot) {
+        if (!clubsSnapshot.hasData) {
+          return const LinearProgressIndicator();
         }
 
-        if (snapshot.hasError) {
-          return const Text(
-            'Unable to load Teachers.',
-            style: TextStyle(color: Colors.red),
-          );
-        }
+        final assignedTeacherIds = clubsSnapshot.data!.docs
+            .where((doc) => !isEditing || doc.id != widget.clubId)
+            .map((doc) => doc.data()['advisorId']?.toString() ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet();
 
-        final advisors = snapshot.data?.docs ?? [];
-        final advisorIds = advisors.map((doc) => doc.id).toSet();
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .where('role', isEqualTo: 'teacher')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const LinearProgressIndicator();
+            }
 
-        return DropdownButtonFormField<String>(
-          initialValue: selectedAdvisorId,
-          isExpanded: true,
-          decoration: const InputDecoration(
-            labelText: 'Assign Teacher',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.person),
-          ),
-          items: [
-            const DropdownMenuItem<String>(
-              value: '',
-              child: Text('Unassigned'),
-            ),
-            ...advisors.map((advisor) {
-              final email =
-                  advisor.data()['email'] ??
-                  advisor.data()['name'] ??
-                  advisor.id;
+            if (snapshot.hasError) {
+              return const Text('Unable to load available teachers.');
+            }
 
-              return DropdownMenuItem<String>(
-                value: advisor.id,
-                child: Text(email.toString(), overflow: TextOverflow.ellipsis),
-              );
-            }),
-            if (selectedAdvisorId.isNotEmpty &&
-                !advisorIds.contains(selectedAdvisorId))
-              DropdownMenuItem<String>(
-                value: selectedAdvisorId,
-                child: Text(
-                  selectedAdvisorEmail.isNotEmpty
-                      ? 'Current assignment: $selectedAdvisorEmail'
-                      : 'Current assignment',
-                  overflow: TextOverflow.ellipsis,
-                ),
+            final availableTeachers = snapshot.data!.docs.where((teacher) {
+              return !assignedTeacherIds.contains(teacher.id) ||
+                  teacher.id == selectedAdvisorId;
+            }).toList();
+
+            return DropdownButtonFormField<String>(
+              initialValue: selectedAdvisorId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Assign Available Teacher',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.person),
               ),
-          ],
-          onChanged: (value) {
-            if (value == null) return;
+              items: [
+                const DropdownMenuItem(value: '', child: Text('Unassigned')),
+                ...availableTeachers.map((teacher) {
+                  final data = teacher.data();
+                  final name =
+                      data['name'] ??
+                      '${data['firstName'] ?? ''} ${data['lastName'] ?? ''}'
+                          .trim();
 
-            setState(() {
-              selectedAdvisorId = value;
+                  return DropdownMenuItem<String>(
+                    value: teacher.id,
+                    child: Text(
+                      name.toString().isEmpty
+                          ? 'Unnamed Teacher'
+                          : name.toString(),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
 
-              if (value.isEmpty) {
-                selectedAdvisorEmail = '';
-              } else {
-                final matchingAdvisors = advisors.where(
-                  (advisor) => advisor.id == value,
-                );
+                setState(() {
+                  selectedAdvisorId = value;
 
-                if (matchingAdvisors.isNotEmpty) {
-                  final advisorData = matchingAdvisors.first.data();
-
-                  selectedAdvisorEmail =
-                      advisorData['email'] ?? advisorData['name'] ?? '';
-                }
-              }
-            });
+                  if (value.isEmpty) {
+                    selectedAdvisorEmail = '';
+                  } else {
+                    final teacher = snapshot.data!.docs.firstWhere(
+                      (doc) => doc.id == value,
+                    );
+                    selectedAdvisorEmail =
+                        teacher.data()['name']?.toString() ?? '';
+                  }
+                });
+              },
+            );
           },
         );
       },
@@ -1881,7 +1946,6 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
     if (!_formKey.currentState!.validate()) return;
 
     final user = FirebaseAuth.instance.currentUser;
-
     if (user == null) return;
 
     setState(() {
@@ -1902,14 +1966,31 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
     };
 
     try {
+      String teacherName = '';
+
+      if (widget.isAdmin && selectedAdvisorId.isNotEmpty) {
+        final teacherDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(selectedAdvisorId)
+            .get();
+
+        final teacherData = teacherDoc.data() ?? {};
+
+        teacherName =
+            (teacherData['name'] ??
+                    '${teacherData['firstName'] ?? ''} ${teacherData['lastName'] ?? ''}')
+                .toString()
+                .trim();
+      } else if (!widget.isAdmin) {
+        teacherName = user.displayName ?? '';
+      }
+
       final existingClubs = await FirebaseFirestore.instance
           .collection('clubs')
           .get();
 
       final isDuplicate = existingClubs.docs.any((doc) {
-        if (isEditing && doc.id == widget.clubId) {
-          return false;
-        }
+        if (isEditing && doc.id == widget.clubId) return false;
 
         final existingName = (doc.data()['name'] ?? '')
             .toString()
@@ -1933,7 +2014,6 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
             backgroundColor: Colors.red,
           ),
         );
-
         return;
       }
 
@@ -1942,7 +2022,8 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
 
         if (widget.isAdmin) {
           updateData['advisorId'] = selectedAdvisorId;
-          updateData['advisorEmail'] = selectedAdvisorEmail;
+          updateData['advisorName'] = teacherName;
+          updateData['advisorEmail'] = '';
         }
 
         await FirebaseFirestore.instance
@@ -1952,14 +2033,11 @@ class _ClubFormDialogState extends State<ClubFormDialog> {
       } else {
         final advisorId = widget.isAdmin ? selectedAdvisorId : user.uid;
 
-        final advisorEmail = widget.isAdmin
-            ? selectedAdvisorEmail
-            : user.email ?? '';
-
         await FirebaseFirestore.instance.collection('clubs').add({
           ...clubData,
           'advisorId': advisorId,
-          'advisorEmail': advisorEmail,
+          'advisorName': teacherName,
+          'advisorEmail': '',
           'status': widget.isAdmin ? 'approved' : 'pending',
           'createdAt': FieldValue.serverTimestamp(),
         });

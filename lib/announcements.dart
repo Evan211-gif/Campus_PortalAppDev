@@ -2,6 +2,44 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+// ==========================================
+// ANNOUNCEMENT TITLE NORMALIZATION
+// ==========================================
+
+String normalizeAnnouncementTitle(String title) {
+  var normalized = title.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  if (normalized.endsWith('ies') && normalized.length > 4) {
+    normalized = '${normalized.substring(0, normalized.length - 3)}y';
+  } else if (RegExp(r'(sses|shes|ches|xes|zes)$').hasMatch(normalized)) {
+    normalized = normalized.substring(0, normalized.length - 2);
+  } else if (normalized.endsWith('s') &&
+      !normalized.endsWith('ss') &&
+      normalized.length > 3) {
+    normalized = normalized.substring(0, normalized.length - 1);
+  }
+
+  return normalized;
+}
+
+DateTime dateOnly(DateTime date) {
+  return DateTime(date.year, date.month, date.day);
+}
+
+// ==========================================
+// DATE FORMAT: MM/DD/YYYY
+// ==========================================
+
+String formatDate(DateTime date) {
+  return '${date.month.toString().padLeft(2, '0')}/'
+      '${date.day.toString().padLeft(2, '0')}/'
+      '${date.year}';
+}
+
+// ==========================================
+// ANNOUNCEMENTS PAGE
+// ==========================================
+
 class AnnouncementsPage extends StatefulWidget {
   const AnnouncementsPage({super.key});
 
@@ -11,6 +49,63 @@ class AnnouncementsPage extends StatefulWidget {
 
 class _AnnouncementsPageState extends State<AnnouncementsPage> {
   bool showingArchived = false;
+
+  // ==========================================
+  // PERMANENTLY DELETE ARCHIVED ANNOUNCEMENT
+  // ==========================================
+
+  Future<void> _deleteAnnouncement(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Announcement?'),
+        content: const Text(
+          'This announcement will be permanently deleted. '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await doc.reference.delete();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Announcement permanently deleted.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete announcement: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +183,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                   child: const Icon(Icons.add),
                 )
               : null,
+
           body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: FirebaseFirestore.instance
                 .collection('announcements')
@@ -97,6 +193,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                 )
                 .orderBy('publishedAt', descending: true)
                 .snapshots(),
+
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return const Center(
@@ -108,7 +205,39 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              final announcements = snapshot.data?.docs ?? [];
+              final today = dateOnly(DateTime.now());
+
+              final announcements = (snapshot.data?.docs ?? []).where((doc) {
+                if (showingArchived) return true;
+
+                final data = doc.data();
+
+                final start = (data['publishDate'] as Timestamp?)?.toDate();
+                final end = (data['endDate'] as Timestamp?)?.toDate();
+
+                // Keep older announcements without date fields.
+                if (start == null || end == null) return true;
+
+                final startDay = dateOnly(start);
+                final endDay = dateOnly(end);
+
+                return !today.isBefore(startDay) && !today.isAfter(endDay);
+              }).toList();
+
+              // Pinned announcements always appear first.
+              announcements.sort((a, b) {
+                final aPinned = a.data()['pinned'] == true;
+                final bPinned = b.data()['pinned'] == true;
+
+                if (aPinned != bPinned) {
+                  return aPinned ? -1 : 1;
+                }
+
+                final aDate = a.data()['publishedAt'] as Timestamp?;
+                final bDate = b.data()['publishedAt'] as Timestamp?;
+
+                return (bDate?.compareTo(aDate ?? Timestamp(0, 0)) ?? 0);
+              });
 
               if (announcements.isEmpty) {
                 return const Center(child: Text('No announcements available.'));
@@ -118,7 +247,8 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                 padding: const EdgeInsets.all(16),
                 itemCount: announcements.length,
                 itemBuilder: (context, index) {
-                  final data = announcements[index].data();
+                  final announcement = announcements[index];
+                  final data = announcement.data();
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -130,14 +260,34 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                         size: 35,
                         color: Colors.blue,
                       ),
+
                       title: Text(
                         data['title'] ?? 'Untitled Announcement',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      subtitle: Text(
-                        data['description'] ?? '',
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
+
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            data['description'] ?? '',
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+
+                          if (data['publishDate'] != null)
+                            Text(
+                              'Posted: ${_formatDate(data['publishDate'])}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+
+                          if (data['endDate'] != null)
+                            Text(
+                              'Until: ${_formatDate(data['endDate'])}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                        ],
                       ),
 
                       trailing: isAdmin
@@ -150,6 +300,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                     color: Colors.orange,
                                   ),
 
+                                // PUBLISHED ANNOUNCEMENT ACTIONS
                                 if (!showingArchived) ...[
                                   IconButton(
                                     icon: const Icon(
@@ -162,13 +313,13 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                         context: context,
                                         builder: (dialogContext) =>
                                             CreateAnnouncementDialog(
-                                              announcementId:
-                                                  announcements[index].id,
+                                              announcementId: announcement.id,
                                               existingData: data,
                                             ),
                                       );
                                     },
                                   ),
+
                                   IconButton(
                                     icon: const Icon(
                                       Icons.archive_outlined,
@@ -183,7 +334,8 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                             'Archive Announcement?',
                                           ),
                                           content: const Text(
-                                            'This announcement will be moved to Archived Announcements.',
+                                            'This announcement will be moved '
+                                            'to Archived Announcements.',
                                           ),
                                           actions: [
                                             TextButton(
@@ -209,7 +361,7 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                       try {
                                         await FirebaseFirestore.instance
                                             .collection('announcements')
-                                            .doc(announcements[index].id)
+                                            .doc(announcement.id)
                                             .update({
                                               'status': 'archived',
                                               'archivedAt':
@@ -240,148 +392,37 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
                                       }
                                     },
                                   ),
-                                ] else ...[
+                                ]
+                                // ARCHIVED ANNOUNCEMENT ACTIONS
+                                else ...[
                                   IconButton(
                                     icon: const Icon(
                                       Icons.restore,
                                       color: Colors.green,
                                     ),
-                                    tooltip: 'Restore Announcement',
-                                    onPressed: () async {
-                                      final confirm = await showDialog<bool>(
+                                    tooltip: 'Edit and Restore',
+                                    onPressed: () {
+                                      showDialog(
                                         context: context,
-                                        builder: (dialogContext) => AlertDialog(
-                                          title: const Text(
-                                            'Restore Announcement?',
-                                          ),
-                                          content: const Text(
-                                            'This announcement will return to Published Announcements.',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                dialogContext,
-                                                false,
-                                              ),
-                                              child: const Text('Cancel'),
+                                        builder: (dialogContext) =>
+                                            CreateAnnouncementDialog(
+                                              announcementId: announcement.id,
+                                              existingData: data,
+                                              restoreAfterSave: true,
                                             ),
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                dialogContext,
-                                                true,
-                                              ),
-                                              child: const Text('Restore'),
-                                            ),
-                                          ],
-                                        ),
                                       );
-
-                                      if (confirm != true) return;
-
-                                      try {
-                                        await FirebaseFirestore.instance
-                                            .collection('announcements')
-                                            .doc(announcements[index].id)
-                                            .update({
-                                              'status': 'published',
-                                              'archivedAt': FieldValue.delete(),
-                                            });
-
-                                        if (!context.mounted) return;
-
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  'Announcement restored successfully.',
-                                                ),
-                                              ),
-                                            );
-                                      } catch (error) {
-                                        if (!context.mounted) return;
-
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Failed to restore: $error',
-                                                ),
-                                              ),
-                                            );
-                                      }
                                     },
                                   ),
+
+                                  // DELETE BUTTON
                                   IconButton(
                                     icon: const Icon(
                                       Icons.delete_outline,
                                       color: Colors.red,
                                     ),
-                                    tooltip: 'Delete Announcement Permanently',
-                                    onPressed: () async {
-                                      final confirm = await showDialog<bool>(
-                                        context: context,
-                                        builder: (dialogContext) => AlertDialog(
-                                          title: const Text(
-                                            'Delete Announcement?',
-                                          ),
-                                          content: const Text(
-                                            'This will permanently delete this archived announcement. This action cannot be undone.',
-                                          ),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                dialogContext,
-                                                false,
-                                              ),
-                                              child: const Text('Cancel'),
-                                            ),
-                                            TextButton(
-                                              onPressed: () => Navigator.pop(
-                                                dialogContext,
-                                                true,
-                                              ),
-                                              child: const Text(
-                                                'Delete Permanently',
-                                                style: TextStyle(
-                                                  color: Colors.red,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-
-                                      if (confirm != true) return;
-
-                                      try {
-                                        await FirebaseFirestore.instance
-                                            .collection('announcements')
-                                            .doc(announcements[index].id)
-                                            .delete();
-
-                                        if (!context.mounted) return;
-
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  'Announcement deleted permanently.',
-                                                ),
-                                              ),
-                                            );
-                                      } catch (error) {
-                                        if (!context.mounted) return;
-
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Failed to delete: $error',
-                                                ),
-                                              ),
-                                            );
-                                      }
-                                    },
+                                    tooltip: 'Delete Permanently',
+                                    onPressed: () =>
+                                        _deleteAnnouncement(announcement),
                                   ),
                                 ],
                               ],
@@ -399,16 +440,28 @@ class _AnnouncementsPageState extends State<AnnouncementsPage> {
       },
     );
   }
+
+  String _formatDate(dynamic value) {
+    if (value is! Timestamp) return '';
+
+    return formatDate(value.toDate());
+  }
 }
+
+// ==========================================
+// CREATE / EDIT ANNOUNCEMENT DIALOG
+// ==========================================
 
 class CreateAnnouncementDialog extends StatefulWidget {
   final String? announcementId;
   final Map<String, dynamic>? existingData;
+  final bool restoreAfterSave;
 
   const CreateAnnouncementDialog({
     super.key,
     this.announcementId,
     this.existingData,
+    this.restoreAfterSave = false,
   });
 
   bool get isEditing => announcementId != null;
@@ -424,6 +477,15 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
   final titleController = TextEditingController();
   final descriptionController = TextEditingController();
 
+  String selectedCategory = 'General';
+  bool isPinned = false;
+  bool isSaving = false;
+
+  DateTime publishDate = dateOnly(DateTime.now());
+  DateTime? endDate;
+
+  final categories = ['General', 'Academic', 'Events', 'Emergency'];
+
   @override
   void initState() {
     super.initState();
@@ -431,6 +493,15 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
     final data = widget.existingData;
 
     if (data != null) {
+      final savedPublishDate = data['publishDate'] as Timestamp?;
+      final savedEndDate = data['endDate'] as Timestamp?;
+
+      publishDate = savedPublishDate != null
+          ? dateOnly(savedPublishDate.toDate())
+          : dateOnly(DateTime.now());
+
+      endDate = savedEndDate != null ? dateOnly(savedEndDate.toDate()) : null;
+
       titleController.text = data['title'] ?? '';
       descriptionController.text = data['description'] ?? '';
 
@@ -442,11 +513,43 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
     }
   }
 
-  String selectedCategory = 'General';
-  bool isPinned = false;
-  bool isSaving = false;
+  Future<void> selectPublishDate() async {
+    final today = dateOnly(DateTime.now());
 
-  final categories = ['General', 'Academic', 'Events', 'Emergency'];
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: publishDate.isBefore(today) ? today : publishDate,
+      firstDate: today,
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      setState(() {
+        publishDate = dateOnly(picked);
+
+        if (endDate != null && dateOnly(endDate!).isBefore(publishDate)) {
+          endDate = null;
+        }
+      });
+    }
+  }
+
+  Future<void> selectEndDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: endDate == null || dateOnly(endDate!).isBefore(publishDate)
+          ? publishDate
+          : endDate!,
+      firstDate: publishDate,
+      lastDate: DateTime(2100),
+    );
+
+    if (picked != null) {
+      setState(() {
+        endDate = dateOnly(picked);
+      });
+    }
+  }
 
   Future<void> publishAnnouncement() async {
     if (!_formKey.currentState!.validate()) return;
@@ -455,20 +558,98 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
 
     if (user == null) return;
 
+    final today = dateOnly(DateTime.now());
+
+    if (endDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select an end date.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (dateOnly(endDate!).isBefore(dateOnly(publishDate))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('End date cannot be before publish date.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // New announcements and restored announcements cannot
+    // have a publish date earlier than today.
+    if ((!widget.isEditing || widget.restoreAfterSave) &&
+        dateOnly(publishDate).isBefore(today)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Publish date cannot be in the past.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       isSaving = true;
     });
 
     try {
-      final announcementData = {
-        'title': titleController.text.trim(),
+      final enteredTitle = titleController.text.trim();
+
+      final normalizedTitle = normalizeAnnouncementTitle(enteredTitle);
+
+      // Check published AND archived announcements.
+      final existingAnnouncements = await FirebaseFirestore.instance
+          .collection('announcements')
+          .get();
+
+      final duplicateExists = existingAnnouncements.docs.any((doc) {
+        if (widget.isEditing && doc.id == widget.announcementId) {
+          return false;
+        }
+
+        final existingTitle = doc.data()['title']?.toString() ?? '';
+
+        return normalizeAnnouncementTitle(existingTitle) == normalizedTitle;
+      });
+
+      if (duplicateExists) {
+        if (!mounted) return;
+
+        setState(() {
+          isSaving = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('An announcement with this title already exists.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+
+        return;
+      }
+
+      final announcementData = <String, dynamic>{
+        'title': enteredTitle,
         'description': descriptionController.text.trim(),
         'category': selectedCategory,
         'pinned': isPinned,
+        'publishDate': Timestamp.fromDate(dateOnly(publishDate)),
+        'endDate': Timestamp.fromDate(dateOnly(endDate!)),
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (widget.isEditing) {
+        if (widget.restoreAfterSave) {
+          announcementData['status'] = 'published';
+          announcementData['archivedAt'] = FieldValue.delete();
+        }
+
         await FirebaseFirestore.instance
             .collection('announcements')
             .doc(widget.announcementId)
@@ -489,7 +670,9 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            widget.isEditing
+            widget.restoreAfterSave
+                ? 'Announcement updated and restored successfully!'
+                : widget.isEditing
                 ? 'Announcement updated successfully!'
                 : 'Announcement published successfully!',
           ),
@@ -505,7 +688,7 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to publish announcement: $error'),
+          content: Text('Failed to save announcement: $error'),
           backgroundColor: Colors.red,
         ),
       );
@@ -522,7 +705,14 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Create Announcement'),
+      title: Text(
+        widget.restoreAfterSave
+            ? 'Edit and Restore Announcement'
+            : widget.isEditing
+            ? 'Edit Announcement'
+            : 'Create Announcement',
+      ),
+
       content: SizedBox(
         width: 400,
         child: SingleChildScrollView(
@@ -541,10 +731,47 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
                     if (value == null || value.trim().isEmpty) {
                       return 'Please enter a title.';
                     }
+
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 16),
+
+                // PUBLISH DATE
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Publish Date'),
+                  subtitle: Text(formatDate(publishDate)),
+                  trailing: const Icon(Icons.calendar_month),
+                  onTap: isSaving ? null : selectPublishDate,
+                ),
+
+                // END DATE
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('End Date'),
+                  subtitle: Text(
+                    endDate == null
+                        ? 'Select when this announcement expires'
+                        : formatDate(endDate!),
+                  ),
+                  trailing: const Icon(Icons.event_busy),
+                  onTap: isSaving ? null : selectEndDate,
+                ),
+
+                if (endDate == null)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Please select an end date.',
+                      style: TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ),
+
+                const SizedBox(height: 16),
+
+                // CATEGORY
                 DropdownButtonFormField<String>(
                   initialValue: selectedCategory,
                   decoration: const InputDecoration(
@@ -557,15 +784,20 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
                       child: Text(category),
                     );
                   }).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        selectedCategory = value;
-                      });
-                    }
-                  },
+                  onChanged: isSaving
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() {
+                              selectedCategory = value;
+                            });
+                          }
+                        },
                 ),
+
                 const SizedBox(height: 16),
+
+                // DESCRIPTION
                 TextFormField(
                   controller: descriptionController,
                   maxLines: 5,
@@ -578,30 +810,38 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
                     if (value == null || value.trim().isEmpty) {
                       return 'Please enter a description.';
                     }
+
                     return null;
                   },
                 ),
+
                 const SizedBox(height: 8),
+
+                // PIN ANNOUNCEMENT
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Pin this announcement'),
                   value: isPinned,
-                  onChanged: (value) {
-                    setState(() {
-                      isPinned = value ?? false;
-                    });
-                  },
+                  onChanged: isSaving
+                      ? null
+                      : (value) {
+                          setState(() {
+                            isPinned = value ?? false;
+                          });
+                        },
                 ),
               ],
             ),
           ),
         ),
       ),
+
       actions: [
         TextButton(
           onPressed: isSaving ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
+
         ElevatedButton(
           onPressed: isSaving ? null : publishAnnouncement,
           child: isSaving
@@ -610,7 +850,13 @@ class _CreateAnnouncementDialogState extends State<CreateAnnouncementDialog> {
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Publish'),
+              : Text(
+                  widget.restoreAfterSave
+                      ? 'Save and Restore'
+                      : widget.isEditing
+                      ? 'Save Changes'
+                      : 'Publish',
+                ),
         ),
       ],
     );

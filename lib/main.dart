@@ -1,4 +1,4 @@
-﻿import 'login.dart';
+﻿import 'class_view.dart';
 import 'landing_page.dart';
 import 'profile.dart';
 import 'rooms.dart';
@@ -130,6 +130,7 @@ class _MyAppState extends State<MyApp> {
         final isAdmin = role == 'admin';
 
         final features = [
+          {'name': 'Class', 'icon': Icons.school, 'admin': false},
           {'name': 'Schedule', 'icon': Icons.calendar_month, 'admin': false},
           {'name': 'Events', 'icon': Icons.event, 'admin': false},
           {'name': 'Announcements', 'icon': Icons.campaign, 'admin': false},
@@ -142,11 +143,20 @@ class _MyAppState extends State<MyApp> {
             'icon': Icons.event_available,
             'admin': true,
           },
+          {
+            'name': 'User Management',
+            'icon': Icons.manage_accounts,
+            'admin': true,
+          },
         ];
 
         final results = features.where((feature) {
           final name = feature['name'] as String;
           final adminOnly = feature['admin'] as bool;
+
+          if (name == 'Class' && role != 'student' && role != 'teacher') {
+            return false;
+          }
 
           return name.toLowerCase().contains(_searchQuery.toLowerCase()) &&
               (!adminOnly || isAdmin);
@@ -217,6 +227,9 @@ class _MyAppState extends State<MyApp> {
                         Widget? page;
 
                         switch (name) {
+                          case 'Class':
+                            page = const ClassViewPage();
+                            break;
                           case 'Schedule':
                             page = const SchedulePage();
                             break;
@@ -240,6 +253,10 @@ class _MyAppState extends State<MyApp> {
                             break;
                           case 'Club Activity Requests':
                             page = const ClubActivityApprovalPage();
+                            break;
+
+                          case 'User Management':
+                            page = const UserManagementPage();
                             break;
                         }
 
@@ -304,55 +321,76 @@ class _MyAppState extends State<MyApp> {
                   ],
                 ),
               ),
+
               ListTile(
                 leading: const Icon(Icons.dashboard),
                 title: const Text('Dashboard'),
                 onTap: () => Navigator.pop(context),
               ),
+
               ListTile(
                 leading: const Icon(Icons.calendar_month),
                 title: const Text('Schedule'),
                 onTap: () => openPage(const SchedulePage()),
               ),
+
               ListTile(
                 leading: const Icon(Icons.event),
                 title: const Text('Events'),
                 onTap: () => openPage(const EventsPage()),
               ),
+
               ListTile(
                 leading: const Icon(Icons.campaign),
                 title: const Text('Announcements'),
                 onTap: () => openPage(const AnnouncementsPage()),
               ),
+
               ListTile(
                 leading: const Icon(Icons.groups),
                 title: const Text('Clubs'),
                 onTap: () => openPage(const ClubsPage()),
               ),
+
               ListTile(
                 leading: const Icon(Icons.meeting_room),
                 title: const Text('Rooms'),
                 onTap: () => openPage(const RoomsPage()),
               ),
+
               ListTile(
                 leading: const Icon(Icons.person),
                 title: const Text('Profile'),
                 onTap: () => openPage(const ProfilePage()),
               ),
+
+              // CLASS: STUDENTS AND TEACHERS ONLY
+              if (role == 'student' || role == 'teacher')
+                ListTile(
+                  leading: const Icon(Icons.school),
+                  title: const Text('Class'),
+                  onTap: () => openPage(const ClassViewPage()),
+                ),
+
+              // ADMIN ONLY
               if (isAdmin) ...[
                 const Divider(),
+
                 ListTile(
                   leading: const Icon(Icons.school),
                   title: const Text('Class Management'),
                   onTap: () => openPage(const ClassManagementPage()),
                 ),
+
                 ListTile(
                   leading: const Icon(Icons.event_available),
                   title: const Text('Club Activity Requests'),
                   onTap: () => openPage(const ClubActivityApprovalPage()),
                 ),
               ],
+
               const Divider(),
+
               ListTile(
                 leading: const Icon(Icons.logout, color: Colors.red),
                 title: const Text('Logout'),
@@ -491,7 +529,9 @@ class _MyAppState extends State<MyApp> {
                                       color: const Color(0x990B2340),
                                       borderRadius: BorderRadius.circular(14),
                                       border: Border.all(
-                                        color: Colors.white.withOpacity(0.25),
+                                        color: Colors.white.withValues(
+                                          alpha: 0.25,
+                                        ),
                                       ),
                                     ),
                                     child: Column(
@@ -720,6 +760,22 @@ class _MyAppState extends State<MyApp> {
                                   },
                                 ),
 
+                                // STUDENTS AND TEACHERS ONLY
+                                if (role == 'student' || role == 'teacher')
+                                  _featureCard(
+                                    Icons.school,
+                                    'Class',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const ClassViewPage(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+
                                 // ADMIN ONLY
                                 if (isAdmin) ...[
                                   _featureCard(
@@ -764,6 +820,8 @@ class _MyAppState extends State<MyApp> {
                                     },
                                   ),
                                 ],
+
+                                // ALL ROLES
                                 _featureCard(
                                   Icons.person,
                                   'Profile',
@@ -826,7 +884,7 @@ class _MyAppState extends State<MyApp> {
                               for (final doc in snapshot.data!.docs) {
                                 final data = doc.data();
 
-                                if (data['status'] == 'archived') continue;
+                                if (data['status'] != 'approved') continue;
                                 if (data['date'] is! Timestamp) continue;
 
                                 final date = _dateOnly(
@@ -1457,7 +1515,7 @@ class _DashboardAnnouncementsState extends State<DashboardAnnouncements> {
     final upcomingEvents = snapshot.data!.docs.where((event) {
       final data = event.data();
 
-      if (data['status'] == 'archived') return false;
+      if (data['status'] != 'approved') return false;
 
       final dateValue = data['date'];
       final startTime = data['startTimeMinutes'];

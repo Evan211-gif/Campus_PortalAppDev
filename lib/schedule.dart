@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,6 +24,13 @@ class _SchedulePageState extends State<SchedulePage> {
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  bool _isStudent = false;
+  bool _membershipLoaded = false;
+  String? _approvedClubId;
+
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _membershipSubscription;
+
   static const Color primaryColor = Color(0xFF245A91);
   static const Color classColor = Color(0xFFE67E22);
   static const Color eventColor = Color(0xFF2878D0);
@@ -36,6 +45,94 @@ class _SchedulePageState extends State<SchedulePage> {
 
     _classesFuture = _loadClassSchedules();
     _holidaysFuture = _loadHolidays(_focusedDate.year);
+
+    _loadStudentMembership();
+  }
+
+  Future<void> _loadStudentMembership() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      if (mounted) {
+        setState(() {
+          _isStudent = true;
+          _membershipLoaded = true;
+          _approvedClubId = null;
+        });
+      }
+      return;
+    }
+
+    try {
+      final userDoc = await _db.collection('users').doc(user.uid).get();
+      final role = userDoc.data()?['role']?.toString();
+
+      if (!mounted) return;
+
+      if (role != 'student') {
+        setState(() {
+          _isStudent = false;
+          _membershipLoaded = true;
+        });
+        return;
+      }
+
+      setState(() {
+        _isStudent = true;
+        _membershipLoaded = false;
+      });
+
+      // Listen for changes to the student's approved club membership.
+      _membershipSubscription = _db
+          .collection('student_memberships')
+          .doc(user.uid)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              if (!mounted) return;
+
+              final data = snapshot.data();
+
+              setState(() {
+                _approvedClubId = data?['approvedClubId']?.toString().trim();
+
+                if (_approvedClubId == null || _approvedClubId!.isEmpty) {
+                  _approvedClubId = null;
+                }
+
+                _membershipLoaded = true;
+              });
+            },
+            onError: (error) {
+              debugPrint('Membership loading error: $error');
+
+              if (!mounted) return;
+
+              // Fail closed: do not show club activities if membership
+              // information cannot be verified.
+              setState(() {
+                _approvedClubId = null;
+                _membershipLoaded = true;
+              });
+            },
+          );
+    } catch (error) {
+      debugPrint('Student membership error: $error');
+
+      if (!mounted) return;
+
+      setState(() {
+        _isStudent = true;
+        _approvedClubId = null;
+        _membershipLoaded = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _membershipSubscription?.cancel();
+    super.dispose();
   }
 
   // DATE HELPERS
@@ -528,6 +625,20 @@ class _SchedulePageState extends State<SchedulePage> {
 
                     if (data['status'] != 'approved') continue;
                     if (data['date'] is! Timestamp) continue;
+
+                    // STUDENT CLUB MEMBERSHIP FILTER
+                    if (_isStudent) {
+                      // Wait until membership information is loaded.
+                      if (!_membershipLoaded) continue;
+
+                      // Students without an approved club cannot see club activities.
+                      if (_approvedClubId == null) continue;
+
+                      // Only show activities belonging to the student's approved club.
+                      final activityClubId = data['clubId']?.toString();
+
+                      if (activityClubId != _approvedClubId) continue;
+                    }
 
                     final date = _dateOnly(
                       (data['date'] as Timestamp).toDate(),

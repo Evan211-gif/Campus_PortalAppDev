@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -319,7 +320,7 @@ class _RoomsPageState extends State<RoomsPage> {
                     child: ListView.separated(
                       shrinkWrap: true,
                       itemCount: bookings.length,
-                      separatorBuilder: (_, __) => const Divider(height: 20),
+                      separatorBuilder: (_, _) => const Divider(height: 20),
                       itemBuilder: (context, index) {
                         final booking = bookings[index];
 
@@ -524,12 +525,18 @@ class _RoomsPageState extends State<RoomsPage> {
       backgroundColor: const Color(0xFFF7F8FA),
       appBar: AppBar(
         title: const Text(
-          'Room Availability',
+          'Find a Room',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
+        centerTitle: true,
         backgroundColor: const Color(0xFF245A91),
         foregroundColor: Colors.white,
         elevation: 0,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Color(0xFF245A91),
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _db.collection('classes').snapshots(),
@@ -726,4 +733,3 @@ class _RoomsPageState extends State<RoomsPage> {
     );
   }
 }
-

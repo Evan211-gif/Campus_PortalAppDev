@@ -1,7 +1,5 @@
 import 'dart:ui' as ui;
 
-import 'landing_page.dart';
-
 import 'package:flutter/material.dart';
 
 import 'login.dart';
@@ -45,9 +43,9 @@ class LandingPage extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Image.asset(
-                            'assets/aces_logo.png',
-                            height: 125,
-                            width: 125,
+                            'assets/aces_emblem.png',
+                            height: 145,
+                            width: 145,
                             fit: BoxFit.contain,
                           ),
 

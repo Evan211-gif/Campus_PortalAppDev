@@ -421,10 +421,12 @@ class _UserManagementPageState extends State<UserManagementPage> {
               TextFormField(
                 controller: _institutionalIdController,
                 keyboardType: TextInputType.number,
-                maxLength: 10,
+                maxLength: _selectedRole == 'teacher' ? 5 : 10,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(10),
+                  LengthLimitingTextInputFormatter(
+                    _selectedRole == 'teacher' ? 5 : 10,
+                  ),
                 ],
                 decoration:
                     _decoration(
@@ -432,13 +434,18 @@ class _UserManagementPageState extends State<UserManagementPage> {
                       Icons.confirmation_number_outlined,
                     ).copyWith(
                       counterText: '',
-                      hintText: 'Enter exactly 10 digits',
+                      hintText: _selectedRole == 'teacher'
+                          ? 'Enter exactly 5 digits'
+                          : 'Enter exactly 10 digits',
                     ),
                 validator: (value) {
+                  final requiredLength = _selectedRole == 'teacher' ? 5 : 10;
+
                   if (value == null ||
-                      !RegExp(r'^[0-9]{10}$').hasMatch(value)) {
-                    return '$_idLabel must contain exactly 10 digits.';
+                      !RegExp('^[0-9]{$requiredLength}\$').hasMatch(value)) {
+                    return '$_idLabel must contain exactly $requiredLength digits.';
                   }
+
                   return null;
                 },
               ),

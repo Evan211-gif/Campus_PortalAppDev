@@ -349,7 +349,7 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
               }).toList();
 
               return AlertDialog(
-                title: const Text('Assign Students'),
+                title: const Text('View / Manage Students'),
                 content: SizedBox(
                   width: 450,
                   height: 450,
@@ -368,7 +368,24 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('${selectedStudents.length} selected'),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Current / Selected Students',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                Text(
+                                  '${selectedStudents.length} student(s) assigned',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           TextButton(
                             onPressed: () {
                               setDialogState(selectedStudents.clear);
@@ -583,6 +600,7 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
     final subjectCode = data['subjectCode'] ?? '';
     final shift = data['shift'] ?? 'Shift not assigned';
     final studentCount = data['studentCount'] ?? 0;
+    final teacherName = data['teacherName'] ?? 'Not assigned';
 
     final schedules = data['schedules'] is List
         ? data['schedules'] as List
@@ -595,6 +613,7 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Subject information
             Row(
               children: [
                 const CircleAvatar(child: Icon(Icons.menu_book)),
@@ -632,21 +651,56 @@ class _ClassManagementPageState extends State<ClassManagementPage> {
                 ),
               ],
             ),
+
             const Divider(height: 24),
+
+            // Assigned Teacher
             Row(
               children: [
-                const Icon(Icons.people_outline, size: 20),
+                const Icon(
+                  Icons.person_outline,
+                  size: 20,
+                  color: Color(0xFF245A91),
+                ),
                 const SizedBox(width: 8),
-                Text('$studentCount assigned students'),
-                const Spacer(),
-                ElevatedButton.icon(
-                  onPressed: () => _manageStudents(classId, data),
-                  icon: const Icon(Icons.person_add_alt_1, size: 18),
-                  label: const Text('Manage Students'),
+                const Text('Assigned Teacher: '),
+                Expanded(
+                  child: Text(
+                    teacherName.toString(),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ],
             ),
+
             const SizedBox(height: 12),
+
+            // Assigned Students
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.people_outline, size: 20),
+                    const SizedBox(width: 8),
+                    Text('$studentCount assigned students'),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _manageStudents(classId, data),
+                    icon: const Icon(Icons.people, size: 18),
+                    label: const Text('View / Manage Students'),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            // Weekly Schedule
             Row(
               children: [
                 const Icon(Icons.calendar_month, size: 20),
@@ -858,8 +912,15 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
           return {
             'id': doc.id,
             'name': data['name'] ?? data['email'] ?? 'Unnamed Teacher',
+            'email': data['email'] ?? '',
           };
         }).toList();
+
+        teachers.sort(
+          (a, b) => a['name'].toString().toLowerCase().compareTo(
+            b['name'].toString().toLowerCase(),
+          ),
+        );
 
         final existingId = widget.existingData?['teacherId']?.toString();
 
@@ -867,9 +928,9 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
             teachers.any((teacher) => teacher['id'] == existingId)) {
           selectedTeacherId = existingId;
 
-          selectedTeacherName = teachers.firstWhere(
-            (teacher) => teacher['id'] == existingId,
-          )['name'];
+          selectedTeacherName = teachers
+              .firstWhere((teacher) => teacher['id'] == existingId)['name']
+              .toString();
         }
 
         isLoadingTeachers = false;
@@ -884,6 +945,98 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Unable to load teachers: $e')));
     }
+  }
+
+  Future<void> _showTeacherSearch() async {
+    final searchController = TextEditingController();
+
+    final selectedTeacher = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final search = searchController.text.toLowerCase().trim();
+
+            final filteredTeachers = teachers.where((teacher) {
+              final name = teacher['name'].toString().toLowerCase();
+              final email = teacher['email'].toString().toLowerCase();
+
+              return name.contains(search) || email.contains(search);
+            }).toList();
+
+            return AlertDialog(
+              title: const Text('Search Teachers'),
+              content: SizedBox(
+                width: 450,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Search teacher name or email',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setDialogState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filteredTeachers.isEmpty
+                          ? const Center(child: Text('No teachers found.'))
+                          : ListView.builder(
+                              itemCount: filteredTeachers.length,
+                              itemBuilder: (context, index) {
+                                final teacher = filteredTeachers[index];
+                                final isSelected =
+                                    teacher['id'] == selectedTeacherId;
+
+                                return ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: const Color(0xFFEAF2FA),
+                                    child: const Icon(
+                                      Icons.person,
+                                      color: Color(0xFF245A91),
+                                    ),
+                                  ),
+                                  title: Text(teacher['name'].toString()),
+                                  subtitle: Text(teacher['email'].toString()),
+                                  trailing: isSelected
+                                      ? const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.green,
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    Navigator.pop(dialogContext, teacher);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    searchController.dispose();
+
+    if (selectedTeacher == null) return;
+
+    setState(() {
+      selectedTeacherId = selectedTeacher['id'].toString();
+      selectedTeacherName = selectedTeacher['name'].toString();
+    });
   }
 
   @override
@@ -1142,31 +1295,40 @@ class _ClassFormDialogState extends State<_ClassFormDialog> {
               if (isLoadingTeachers)
                 const Center(child: CircularProgressIndicator())
               else
-                DropdownButtonFormField<String>(
-                  initialValue: selectedTeacherId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Assign Teacher',
-                    border: OutlineInputBorder(),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _showTeacherSearch,
+                    icon: const Icon(Icons.person_search),
+                    label: Text(
+                      selectedTeacherName ?? 'Search and Assign Teacher',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 18,
+                      ),
+                      alignment: Alignment.centerLeft,
+                    ),
                   ),
-                  hint: const Text('Select a Teacher'),
-                  items: teachers.map((teacher) {
-                    return DropdownMenuItem<String>(
-                      value: teacher['id'] as String,
-                      child: Text(teacher['name'].toString()),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedTeacherId = value;
+                ),
 
-                      selectedTeacherName = teachers
-                          .firstWhere(
-                            (teacher) => teacher['id'] == value,
-                          )['name']
-                          .toString();
-                    });
-                  },
+              const SizedBox(height: 12),
+
+              if (selectedTeacherId != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        selectedTeacherId = null;
+                        selectedTeacherName = null;
+                      });
+                    },
+                    icon: const Icon(Icons.close, size: 18),
+                    label: const Text('Remove assigned teacher'),
+                  ),
                 ),
               const SizedBox(height: 20),
               Row(

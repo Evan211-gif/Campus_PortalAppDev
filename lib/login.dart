@@ -154,14 +154,6 @@ class _LoginPageState extends State<LoginPage> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // SCHOOL LOGO
-                      Image.asset(
-                        'assets/aces_logo.png',
-                        height: 105,
-                        width: 105,
-                        fit: BoxFit.contain,
-                      ),
-
                       const SizedBox(height: 14),
 
                       const Text(

@@ -64,7 +64,7 @@ flutter:
 
   assets:
     - assets/aces_building.png
-    - assets/aces_logo.png
+    - assets/aces_emblem.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
